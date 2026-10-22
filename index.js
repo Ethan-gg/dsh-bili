@@ -10,8 +10,9 @@
  *      把 `duty.md` 交给它，报告写进 `<家>/out/<日期>.md`。
  *   4. **设置页**（`client.js`）通过 `/api/bili-duty/*` 读写配置、看状态、扫码登录。
  *
- * 家里（`$DSH_HOME/bili-duty/`）都有什么：`config.json` / `mcp_server.py`（从 vendor 铺过来，
- * 这样凭证 `bili_credential.json` 落在家里而不是插件包里）/ `duty.md` / `out/` / `duty.log`。
+ * 家里（`$DSH_HOME/bili/` —— 2.1 起从 `bili-duty` 改名，首次启动自动搬迁）都有什么：
+ * `config.json` / `mcp_server.py`（从 vendor 铺过来，这样凭证 `bili_credential.json` 落在家里而不是插件包里）/
+ * `duty.md` / `out/` / `ledger/` / `memory/` / `sync/` / `duty.log`。
  * ============================================================================
  */
 import { loadHostDeps } from './lib/hostdeps.mjs'

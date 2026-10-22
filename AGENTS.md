@@ -8,7 +8,7 @@
    两个都没有**也不用让用户先装** —— 插件点「装依赖」时会**自己下一份 `uv` 到自己的家目录**（免管理员、不用 PATH）；
    只有它自己也下不动时（网络到不了 GitHub / 加速代理 / PyPI 镜像），才需要引导用户手动装。
    · 它是**直连 GitHub → 国内加速代理 → PyPI 镜像**依次试的，并且会**核对官方 sha256** ✓
-   · ⚠️ 若用户机器上的**杀软拦了这次下载**：让他把 `%USERPROFILE%\.dsh\bili-duty\bin\` 加白，或干脆自己装 uv / Python 3.10+ ✓
+   · ⚠️ 若用户机器上的**杀软拦了这次下载**：让他把 `%USERPROFILE%\.dsh\bili\bin\` 加白，或干脆自己装 uv / Python 3.10+ ✓
    · ⭐ **万一下载链路都不通**（有用户反馈"桌面版上这条链路经常不通"）：**手动放一份 `uv.exe` 到 `<家目录>\bin\` 就行**
      —— 插件会**用那一份、跳过下载** ✓（他 `PATH` 里本来就有 `uv` 的话，直接用那个 ✓）
 2. `dsh plugin --profile web add dsh-bili-scroll`（npm，推荐）
@@ -45,11 +45,13 @@
 - `index.js` —— host 半端：11 个工具 + 谷时定时器 + HTTP 接口 + 配置（`config.json` 与 DSH 原生设置页**逐字段对账**：见 `loadCfg` / `saveCfgHost`）+ 值班轮的工具白名单（`mcpWhitelist` → `BILI_MCP_TOOLS`）
 - `client.js` —— 浏览器半端：设置页（注册在 `settings.section`）
 - `lib/` —— 状态目录与家目录 / 极小的 MCP stdio 客户端 / 扫码登录 / **`hostdeps.mjs`（从宿主树取 `@deepseek-ai/*`，拿不到就退到自己依赖 / 本地等价实现）** / **`verify.mjs`（评论发出后复核）**
+- `src/` —— **2.1 起的新代码**：`src/lib/`（`paths` 路径唯一出处 / `config` 统一配置 / `migrate` 搬迁器 / `home` 启动时准备好家）、`src/sync/`（云桥协议 v1，`contract.md` 是给将来写云端的人看的）
+- `test/` —— `node --test "test/*.test.mjs"`（注意要带 glob：直接传目录在 Windows 上会被当成模块名）
 - `prompts/duty.md` —— 一轮要做的事（判定口径 + 红线，**用户可以改**）；升级规矩见 `lib/state.mjs` 的 `ensureCharter`（用户改过 ⇒ 保留他那份、新版落 `duty.md.new`）
 - `vendor/bilibili-mcp/` —— 内置的 Python MCP（MIT，AGI_Ananas）
 - `selfcheck.mjs` + `tools/` —— 本地预检：`node selfcheck.mjs`（**现在不用解析钩子了**；`tools/register.mjs` 那条还留着当备份）
 
 ## 约定
 
-- 配置与运行数据都在用户的 `$DSH_HOME/bili-duty/`，**不写进插件包目录**
+- 配置与运行数据都在用户的 `$DSH_HOME/bili/`（2.1 起；老版本是 `bili-duty/`，首次启动自动搬迁），**不写进插件包目录**
 - 谷时窗口按 DeepSeek 官方口径：工作日 9–12 / 14–18 是高峰，其余（含周末）都是谷时

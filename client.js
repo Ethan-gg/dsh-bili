@@ -522,7 +522,7 @@ function WatchTab() {
             : '读设置中…'),
           fails >= 6 ? h('div', { 'data-bd-note': '' },
             '可以先试：升级到最新版（dsh plugin --profile web add github:c1overzz/dsh-bili-scroll）→ 重启 dsh；还不行就把 ' +
-            '%USERPROFILE%\\.dsh\\bili-duty\\duty.log 的最后几十行发给作者。') : null)
+            '%USERPROFILE%\\.dsh\\bili\\duty.log 的最后几十行发给作者。') : null)
       }
 
       const sw = (k) => Boolean(cfg[k])
