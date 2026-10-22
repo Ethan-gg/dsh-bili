@@ -74,6 +74,8 @@ export function homePaths(home = resolveBiliHome()) {
     diaryOwner: join(home, 'memory', 'diary-owner'),
     diarySelf: join(home, 'memory', 'diary-self'),
     syncDir: join(home, 'sync'),
+    /** 待审草稿（陌生人的回复 / 想发但没发的分享） */
+    pending: join(home, 'pending.json'),
     outbox: join(home, 'sync', 'outbox.jsonl'),
     inbox: join(home, 'sync', 'inbox.jsonl'),
     cursor: join(home, 'sync', 'cursor.json'),
