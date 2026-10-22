@@ -609,6 +609,40 @@ function reportMeta() {
     }
   }
 
+  /**
+   * 写操作（发评论 / 发私信）的统一入口。
+   * 与 readCall 同样的回退规则，但多一层安全判断：**只有 Node 抛异常才退回 MCP**
+   * （B站 明确的业务拒绝不回退 —— 换 Python 也一样发不出去，只是白多打一次网络）。
+   */
+  const writeCall = async (toolName, args) => {
+    if (capabilityNow() === 'python') return call(toolName, args)
+    try {
+      return await nodeBili().call(toolName, args)
+    } catch (e) {
+      const why = String(e?.message ?? e)
+      log(`Node 写能力失败（${toolName}）：${why} ⇒ 退回 Python MCP`)
+      try {
+        return await call(toolName, args)
+      } catch (e2) {
+        throw new Error(`Node 写能力失败（${why}）；Python MCP 也不可用（${e2?.message ?? e2}）`)
+      }
+    }
+  }
+
+  /**
+   * 这条到底发出去了没有？兼容三种回执：
+   *   Python MCP：`{ success:true, rpid }` / Node：`{ success:true }` / 2.0 老接口：纯文本
+   * 解析不出结构 ⇒ 当成功（老接口只回文本，不能因此把真发出去的算失败、额度不记）。
+   */
+  const writeOk = (out) => {
+    let j = out
+    if (typeof j === 'string') { try { j = JSON.parse(j) } catch { return true } }
+    if (!j || typeof j !== 'object') return true
+    if (j.success === false) return false
+    if (j.code !== undefined && j.code !== null && j.code !== '') return Number(j.code) === 0
+    return true
+  }
+
   const hasCredential = () => existsSync(join(stateDir, 'bili_credential.json'))
 
   /* ─────────────── 工具 ─────────────── */
@@ -942,17 +976,17 @@ function reportMeta() {
     if (!taken.item) return { ok: false, error: '队列里没有这条（可能已经发过）' }
     writeQueue(pendingFile, taken.queue)
     const item = taken.item
-    let out = ''
+    let out = null
     let ok = false
     try {
-      out = String(await call('bili_reply', {
+      out = await writeCall('bili_reply', {
         bvid: String(item.bvid ?? ''),
         text: String(item.message ?? ''),
         rpid: Number(item.parent) || 0,
-      }))
-      try { ok = JSON.parse(out)?.code === 0 } catch { ok = !/error|失败|false/i.test(out) }
+      })
+      ok = writeOk(out)
     } catch (e) {
-      out = String(e?.message ?? e)
+      out = { success: false, error: String(e?.message ?? e) }
       ok = false
     }
     if (!ok) {
@@ -961,7 +995,7 @@ function reportMeta() {
       return { ok: false, error: '发送失败，草稿已放回队列', out }
     }
     recordShare({ bvid: item.bvid, rpid: item.parent, text: item.message })
-    return { ok: true, out: out.slice(-600) }
+    return { ok: true, out: typeof out === 'string' ? out.slice(-600) : out }
   }
 
   /* ─────────────── 2.1：待审草稿（`src/host/review.mjs`）───────────────
@@ -1097,17 +1131,35 @@ function reportMeta() {
       // ⭐ 2.1：分享闸门。**只在传了 score 时才判**（老提示词不传 ⇒ 完全走老路）
       const blocked = gateShare(args)
       if (blocked) return blocked
-      const out = await call('bili_reply', {
+      const out = await writeCall('bili_reply', {
         bvid: String(args.bvid ?? ''),
         text: String(args.text ?? ''),
         rpid: Number(args.rpid) || 0,
       })
       // 发出去了才记账（失败不记 —— 否则额度白扣一条）
-      const sentOk = (() => {
-        try { return JSON.parse(String(out))?.code === 0 } catch { return true }   // 解析不了就当成功（老接口只回文本）
-      })()
-      if (sentOk) recordShare({ ...args, text: String(args.text ?? '') })
+      if (writeOk(out)) recordShare({ ...args, text: String(args.text ?? '') })
       return out
+    },
+  })
+
+  tool({
+    name: 'bili_send_message',
+    description: '给 B站 用户发一条私信（宿主只允许发到设置里指定的收件人；别自己编 UID）。\n'
+      + '⚠️ 私信有长度上限（约 500 字符），太长会被 code 21007 拒。',
+    parameters: {
+      receiver_uid: { type: 'number', description: '收件人 UID（必须等于设置里的私信收件人）' },
+      text: { type: 'string', description: '私信正文（短、干净的人话；不要写设置/路径/隐私）' },
+      force: { type: 'boolean', description: '本人当场让你发的：投递方式没开私信时也能发' },
+    },
+    async execute(args) {
+      const allowed = Number(cfg.dmUid) || Number(cfg.dmOwnerUid) || 0
+      if (!allowed) return { ok: false, blocked: true, hint: '还没配置私信收件人：设置页「互动」→ 私信发给谁（UID），或填「@ 谁」让它自己查' }
+      const uid = Number(args.receiver_uid) || allowed
+      if (uid !== allowed) return { ok: false, blocked: true, hint: '私信只能发给设置里的那个人（防止乱发）；要换收件人先去设置页改' }
+      if (cfg.dmMode === 'off' && !args.force) {
+        return { ok: false, blocked: true, hint: '投递方式是「只发评论」，没开私信；本人当场让你发时传 force: true' }
+      }
+      return writeCall('bili_send_message', { receiver_uid: uid, text: String(args.text ?? '') })
     },
   })
 

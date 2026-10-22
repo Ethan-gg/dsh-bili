@@ -208,6 +208,56 @@ export function createBiliHttp({
     }
   }
 
+  /**
+   * POST 一个 B站 写接口（发评论 / 发私信）。
+   * **不缓存、不重试**（写操作重试就是发两遍）；节流与风控熔断跟 GET 共用，
+   * 撞到 HTTP 412/429 或风控 code 同样进熔断 —— 写操作被风控时继续硬闯最危险。
+   * 返回解析后的 JSON（code 由调用方解释）；网络/解析失败返回 `{ code: -1, message }`。
+   */
+  async function post(input, body, headers = {}, opts = {}) {
+    const url = new URL(input)
+    const timeoutMs = Number(opts.timeoutMs) || 30000
+    const banned = noCache() || !isBili(url.href) ? 0 : bannedUntil()
+    if (banned) {
+      return { code: -412, message: `HTTP 412 —— 本机被 B站 限流了，约 ${banLeftMinutes(banned)} 分钟后自动恢复（写操作先别硬闯）` }
+    }
+    try {
+      await throttle()
+      const payload = body instanceof URLSearchParams || typeof body === 'string' ? body.toString() : JSON.stringify(body ?? {})
+      const headersOut = { ...headers, 'content-type': 'application/x-www-form-urlencoded' }
+      const response = await fetchImpl(url.href, { method: 'POST', headers: headersOut, body: payload, signal: AbortSignal.timeout(timeoutMs) })
+      if (isBili(url.href) && (response.status === 412 || response.status === 429)) {
+        const prev = readJson(banFile, {})
+        const streak = Number(prev.streak ?? 0) + 1
+        const mins = Math.min(30, 5 * 2 ** (streak - 1))
+        if (!noCache()) setBan(mins * 60_000, `HTTP ${response.status}`, { streak, endpoint: url.pathname })
+        return { code: -412, message: `HTTP ${response.status}（B站 风控）—— 已熔断 ${mins} 分钟` }
+      }
+      const text = await response.text()
+      let data
+      try {
+        data = JSON.parse(text)
+        if (!data || typeof data !== 'object') throw new Error('invalid JSON payload')
+      } catch {
+        return { code: -1, message: `非 JSON 响应（HTTP ${response.status}），可能被风控；别重试，先停手` }
+      }
+      if (isBili(url.href) && BAN_CODES.has(Number(data.code))) {
+        const prev = readJson(banFile, {})
+        const streak = Number(prev.streak ?? 0) + 1
+        const mins = Math.min(30, 5 * 2 ** (streak - 1))
+        if (!noCache()) writeJson(banFile, { until: now() + mins * 60_000, why: `code=${data.code}`, at: new Date(now()).toISOString(), streak, endpoint: url.pathname })
+        return { ...data, message: `${data.message ?? ''}（B站 风控 ${data.code}）—— 已熔断 ${mins} 分钟` }
+      }
+      return data
+    } catch (error) {
+      const msg = error?.name === 'TimeoutError' || /timeout/i.test(String(error?.message))
+        ? '请求超时（30 秒）'
+        : '请求失败（网络异常）'
+      log(`B站 写请求失败：${url.pathname} —— ${error?.message ?? error}`)
+      return { code: -1, message: msg }
+    }
+  }
+
   /** 给诊断/排障看：现在是不是被熔断、缓存了几条 */
   function state() {
     const ban = readJson(banFile, {})
@@ -220,5 +270,5 @@ export function createBiliHttp({
     }
   }
 
-  return { get, state, files: { cacheFile, banFile } }
+  return { get, post, state, files: { cacheFile, banFile } }
 }

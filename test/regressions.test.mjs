@@ -91,16 +91,23 @@ test('状态卡接在两条跑法上（常驻会话 / 一次性进程）', () =>
   assert.match(INDEX, /状态卡拼不出来（这一轮照跑）/, '失败要有日志、不能抛出去')
 })
 
-test('M2 能力层：只读三件走 Node、可退回 MCP；写入类不搬', () => {
+test('M2 能力层：只读三件走 Node、可退回 MCP（写入也搬了，同样可退回）', () => {
   assert.match(INDEX, /createNodeBili\(\{ home: stateDir, log \}\)/, '要真建 Node 能力层')
   assert.match(INDEX, /const readCall = async \(toolName, args\) =>/, '只读工具要统一入口')
   assert.match(INDEX, /Node 能力层失败（\$\{toolName\}）：\$\{why\} ⇒ 退回 Python MCP/, 'Node 抛错要能退回 MCP')
-  // 三个只读工具必须走 readCall；bili_reply / bili_done 这些写入/宿主工具不许被换掉
+  // 三个只读工具必须走 readCall
   assert.match(INDEX, /return readCall\('bili_search'/, 'search 走能力层路由')
   assert.match(INDEX, /return readCall\('bili_subtitle'/, 'subtitle 走能力层路由')
   assert.match(INDEX, /return readCall\('bili_comments'/, 'comments 走能力层路由')
   assert.match(INDEX, /const capabilityNow = \(\) =>/, '要有一处统一的开关判断')
   assert.match(INDEX, /capability: 'node'/, '扁平 DEFAULTS 里要有 capability（干净机器默认不依赖 Python）')
+
+  // M2 收尾：写入类（发评论 / 私信）也走 Node，异常时退回 MCP；回执判断收在一处
+  assert.match(INDEX, /const writeCall = async \(toolName, args\) =>/, '写操作也要统一入口')
+  assert.match(INDEX, /out = await writeCall\('bili_reply'/, '发评论（含审核批准）走 writeCall')
+  assert.match(INDEX, /return writeCall\('bili_send_message'/, '私信走 writeCall')
+  assert.match(INDEX, /name: 'bili_send_message'/, '要注册私信工具（常驻会话里她才有这只手）')
+  assert.match(INDEX, /const writeOk = \(out\) =>/, '回执判断要有一处统一实现')
 })
 
 test('M4 云桥：签名入站路由、出站事件、回群的手、配额对账都在', () => {
@@ -199,7 +206,7 @@ test('闸门接在 bili_reply 上，且**没传 score 时不判**（老提示词
   assert.match(INDEX, /const blocked = gateShare\(args\)/, 'bili_reply 里要真的调它')
   assert.match(INDEX, /evaluateShare\(\{/, '判定要落到纯函数上，别在路由里手写一遍规则')
   // 记账两头都要在：失败不记（额度白扣）
-  assert.match(INDEX, /if \(sentOk\) recordShare\(/, '发出去了才记账')
+  assert.match(INDEX, /if \(writeOk\(out\)\) recordShare\(/, '发出去了才记账')
   assert.match(INDEX, /writeLedger\(sharesFile, next\)/, '账本要落盘')
 })
 

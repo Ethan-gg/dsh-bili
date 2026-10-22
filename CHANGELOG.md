@@ -101,6 +101,13 @@
 - **M4 收尾：跨端配额接进分享闸门**（2026-10-22）：`evaluateShare` 新增 `extraShared`，
   云端比本地多出来的分享数会占掉本地当天额度（取严、不重复计本地已记的）；
   真机上云桥（file）跑了一轮，outbox 收到两本日记的 `memory.append` + `quota.state`。
+- **M2 第三刀（收尾）：发评论 / 发私信也 Node 化了**（2026-10-22）：`src/bili/index.mjs` 增加
+  `reply()` / `sendMessage()`（WBI 签名 + csrf + 固定 dev_id；错误码翻成人话），`http.mjs` 增加 POST
+  （节流 + 风控熔断、不缓存不重试）；宿主 `bili_reply`（含审核批准）与新工具 `bili_send_message`
+  统一走 `writeCall`（Node 优先、异常自动退回 MCP），回执判断收进 `writeOk`（兼容 Python `{success}` /
+  Node `{success,code}` / 2.0 纯文本）。沙盒端到端验证：发评论记 rpid 并记账、私信 dev_id 复用、
+  只允许发给设置里的人、`dmMode=off` 时拦截、待审批准走同一段逻辑。
+  还剩 `danmaku` / `video-content`（看弹幕 / 抽帧）没搬。
 
 ## 2.0.0 — 2026-10-21
 

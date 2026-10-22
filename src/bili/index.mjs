@@ -15,7 +15,8 @@
  *   ③ 评论接口的 `oid` 是 **aid** 不是 BV ⇒ 先用 `view?bvid=` 换一次。
  * ============================================================================
  */
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { createBiliHttp, USER_AGENT } from './http.mjs'
 import { mixinKey, signQuery } from './wbi.mjs'
@@ -188,11 +189,112 @@ export function createNodeBili({ home, fetchImpl, now, sleep, log = () => {} } =
     }
   }
 
+  /* ───────────────────────── 写操作（M2 收尾）─────────────────────────
+   * 发评论 / 发私信。形状与 Python MCP 对齐：成功 `{success:true,…}`、被 B站 拒 `{success:false,error,code}`。
+   * 两条规矩：
+   *   ① **网络/意外异常要往外抛**（宿主据此退回 Python MCP）；B站 明确的业务拒绝不抛（换 Python 也一样发不出去）
+   *   ② 失败必须带 error，绝不允许"静默成功" —— 写操作最坏的不是发不出，是以为发出了
+   */
+  const REPLY_HINTS = {
+    '-101': '账号未登录：cookie 失效', '-102': '账号被封停',
+    '-111': 'csrf 校验失败：bili_jct 不对或与 SESSDATA 不是同一个号', '-509': '请求过于频繁',
+    12015: '需要评论验证码（被风控盯上了，停手）', 12016: '内容含敏感信息',
+    12035: '被 UP 主列入评论黑名单', 12051: '重复评论被判刷屏', 12002: '评论区已关闭',
+  }
+  const DM_HINTS = {
+    '-101': '账号未登录', '-111': 'csrf 校验失败', '-509': '请求过于频繁',
+    21007: '私信太长被拒（控制在 500 字符内）', 25004: '对方拒收 / 未互关',
+  }
+  const hintOf = (map, code) => map[String(code)] ?? ''
+
+  /** 私信设备 ID：真浏览器里这个值是固定的；每次随机换等于"反复换设备"，反而更容易被风控 */
+  function stableDevId() {
+    const file = join(home, 'dev_id')
+    try {
+      const v = readFileSync(file, 'utf8').trim()
+      if (/^WEB-[0-9A-F-]{20,}$/i.test(v)) return v
+    } catch { /* 没有就造一个 */ }
+    const v = 'WEB-' + randomUUID().toUpperCase()
+    try { mkdirSync(home, { recursive: true }); writeFileSync(file, v + '\n', 'utf8') } catch (e) {
+      throw new Error('无法保存私信设备 ID，已停止发送：' + String(e?.message ?? e))
+    }
+    return v
+  }
+
+  /** 发评论 / 回复评论（对应 Python 的 bili_reply） */
+  async function reply({ bvid, text, rpid = 0, root = 0 } = {}) {
+    const id = String(bvid ?? '').trim()
+    const msg = String(text ?? '').trim()
+    if (!msg) return { success: false, error: '评论正文是空的' }
+    if (msg.length > 1000) return { success: false, error: `评论太长（${msg.length} 字，上限 1000）` }
+    const c = cred()
+    if (!c?.bili_jct) return { success: false, error: '没登录或缺 bili_jct：先扫码登录再发' }
+
+    const info = await videoView(id)
+    const aid = Number(info?.aid) || 0
+    if (!aid) return { success: false, error: '拿不到 aid（视频信息没取到）' }
+    const params = { type: 1, oid: String(aid), message: msg, plat: 1, csrf: String(c.bili_jct) }
+    if (Number(rpid)) { params.parent = String(Number(rpid)); params.root = String(Number(root) || Number(rpid)) }
+    const key = await wbiKey()
+    const body = new URLSearchParams(params)
+    // 签名只放 query（w_rid/wts），参数本体走 form body —— 这是实测能过的发法
+    const d = await http.post(`${API}/x/v2/reply/add?${signQuery(params, key, clock())}`, body, headers(videoRef(id)))
+    if (Number(d?.code) === -1) throw new Error(d?.message ?? '网络失败')     // 交给宿主退回 MCP
+    if (Number(d?.code) === 0) {
+      const rpidOut = d?.data?.rpid_str ?? d?.data?.rpid ?? ''
+      return { success: true, message: '评论发送成功', ...(rpidOut ? { rpid: String(rpidOut) } : {}) }
+    }
+    const hint = hintOf(REPLY_HINTS, d?.code)
+    return {
+      success: false,
+      code: d?.code,
+      error: hint ? `${hint}（code=${d?.code}）` : `发送失败 code=${d?.code} ${d?.message ?? ''}`.trim(),
+    }
+  }
+
+  /** 发私信（对应 Python 的 bili_send_message） */
+  async function sendMessage({ receiver_uid, text } = {}) {
+    const toMid = Number(receiver_uid) || 0
+    const msg = String(text ?? '').trim()
+    if (!toMid) return { success: false, error: 'receiver_uid 无效' }
+    if (!msg) return { success: false, error: 'text 不能为空' }
+    if (msg.length > 500) return { success: false, error: `私信太长（${msg.length} 字，B站 约 500 字符上限，会被 code 21007 拒）` }
+    const c = cred()
+    if (!c?.bili_jct) return { success: false, error: '没登录或缺 bili_jct：先扫码登录再发' }
+
+    const nav = await http.get(`${API}/x/web-interface/nav`, headers('https://www.bilibili.com/'))
+    const sender = Number(nav?.data?.mid) || 0
+    if (Number(nav?.code) !== 0 || !nav?.data?.isLogin || !sender) {
+      return { success: false, error: '登录态无效（nav 说没登录，或凭证已过期）' }
+    }
+    const body = new URLSearchParams()
+    body.set('msg[sender_uid]', String(sender))
+    body.set('msg[receiver_id]', String(toMid))
+    body.set('msg[receiver_type]', '1')
+    body.set('msg[msg_type]', '1')
+    body.set('msg[msg_status]', '0')
+    body.set('msg[timestamp]', String(Math.floor(clock() / 1000)))
+    body.set('msg[dev_id]', stableDevId())
+    body.set('msg[content]', JSON.stringify({ content: msg }))
+    body.set('csrf', String(c.bili_jct))
+    const d = await http.post('https://api.vc.bilibili.com/web_im/v1/web_im/send_msg', body, headers('https://www.bilibili.com/'))
+    if (Number(d?.code) === -1) throw new Error(d?.message ?? '网络失败')
+    if (Number(d?.code) === 0) return { success: true, message: `私信已发送给UID:${toMid}`, data: d?.data ?? null }
+    const hint = hintOf(DM_HINTS, d?.code)
+    return {
+      success: false,
+      code: d?.code,
+      error: hint ? `${hint}（code=${d?.code}）` : `发送失败 code=${d?.code} ${d?.message ?? ''}`.trim(),
+    }
+  }
+
   const METHODS = {
     bili_search: search,
     bili_subtitle: subtitle,
     bili_comments: comments,
     bili_check_credential: whoami,
+    bili_reply: reply,
+    bili_send_message: sendMessage,
   }
 
   return {
@@ -200,6 +302,8 @@ export function createNodeBili({ home, fetchImpl, now, sleep, log = () => {} } =
     subtitle,
     comments,
     whoami,
+    reply,
+    sendMessage,
     /** 宿主按工具名统一路由（和 MCP 的 `call(name, args)` 对得上） */
     call(name, args = {}) {
       const fn = METHODS[name]

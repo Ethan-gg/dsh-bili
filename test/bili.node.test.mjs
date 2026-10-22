@@ -1,11 +1,11 @@
 /**
- * Node 只读能力层单测：search / subtitle / comments 的 URL、签名、返回形状
- * （形状必须与 vendor/bilibili-mcp/mcp_server.py 那三个工具逐字段对齐）
+ * Node 能力层单测：search / subtitle / comments / whoami / reply / send_message
+ * （形状必须与 vendor/bilibili-mcp/mcp_server.py 对应的工具逐字段对齐）
  * 跑法：node --test "test/*.test.mjs"
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createNodeBili } from '../src/bili/index.mjs'
@@ -24,7 +24,7 @@ function setup(routes) {
   const fetchImpl = async (url, init) => {
     const u = new URL(String(url))
     const headers = init?.headers || {}
-    calls.push({ u, headers })
+    calls.push({ u, headers, init })
     for (const [match, body] of routes) if (match(u)) return okRes(body)
     if (u.pathname.endsWith('/nav')) return okRes(NAV)
     throw new Error('unexpected URL: ' + u.href)
@@ -136,8 +136,66 @@ test('whoami：nav 登录态映射成 Python 版 bili_check_credential 的形状
   assert.match(b.message, /未登录/)
 })
 
-test('call()：只认只读三件；写入类明确拒绝（那条仍走 Python）', () => {
+test('reply：WBI 签名 + csrf + parent/root 都带上；成功回 rpid，B站 拒了要带 code/error', async () => {
+  const { bili, calls } = setup([
+    [isView, { code: 0, data: { bvid: 'BV1xx411c7mD', aid: 42, title: 'T' } }],
+    [(u) => u.pathname.endsWith('/x/v2/reply/add'), { code: 0, data: { rpid: 99, rpid_str: '99' } }],
+  ])
+  const r = await bili.call('bili_reply', { bvid: 'BV1xx411c7mD', text: '你好呀', rpid: 7 })
+  assert.equal(r.success, true)
+  assert.equal(r.rpid, '99')
+  const call = calls.find((c) => c.u.pathname.endsWith('/x/v2/reply/add'))
+  assert.equal(call.init.method, 'POST')
+  assert.ok(call.u.searchParams.get('w_rid'), '要 WBI 签名')
+  assert.ok(call.u.searchParams.get('wts'))
+  const body = String(call.init.body)
+  assert.match(body, /oid=42/)
+  assert.match(body, /csrf=J/)
+  assert.match(body, /message=%E4%BD%A0%E5%A5%BD/)
+  assert.match(body, /parent=7/)
+  assert.match(body, /root=7/)
+  assert.match(String(call.init.headers.cookie), /SESSDATA=S/)
+
+  // 风控/CSRF 拒绝：不抛，回 success:false + 人话提示
+  const bad = setup([
+    [isView, { code: 0, data: { bvid: 'BV1xx411c7mD', aid: 42 } }],
+    [(u) => u.pathname.endsWith('/x/v2/reply/add'), { code: -111, message: 'csrf 校验失败' }],
+  ])
+  const r2 = await bad.bili.reply({ bvid: 'BV1xx411c7mD', text: '你好' })
+  assert.equal(r2.success, false)
+  assert.equal(r2.code, -111)
+  assert.match(r2.error, /csrf/)
+})
+
+test('sendMessage：nav 取 sender、固定 dev_id、form body 齐全；太长直接拒', async () => {
+  const { bili, calls, home } = setup([
+    [(u) => u.pathname.endsWith('/nav'), { code: 0, data: { isLogin: true, mid: 123, uname: '她' } }],
+    [(u) => u.pathname.endsWith('/web_im/send_msg'), { code: 0, data: { msg_key: 'k1' } }],
+  ])
+  const r = await bili.call('bili_send_message', { receiver_uid: 9, text: '今天挑了 3 条' })
+  assert.equal(r.success, true)
+  const call = calls.find((c) => c.u.pathname.endsWith('/web_im/send_msg'))
+  const body = String(call.init.body)
+  assert.match(body, /msg%5Bsender_uid%5D=123/)
+  assert.match(body, /msg%5Breceiver_id%5D=9/)
+  assert.match(body, /csrf=J/)
+  assert.match(body, /msg%5Bdev_id%5D=WEB-/)
+  assert.match(body, /msg%5Bcontent%5D=%7B%22content%22%3A%22/)
+
+  // dev_id 必须固定复用（每次换设备 ID 更容易被风控）
+  await bili.sendMessage({ receiver_uid: 9, text: '第二条' })
+  const sents = calls.filter((c) => c.u.pathname.endsWith('/web_im/send_msg'))
+  const devOf = (b) => /msg%5Bdev_id%5D=([^&]+)/.exec(String(b.init.body))?.[1]
+  assert.equal(devOf(sents[0]), devOf(sents[1]), 'dev_id 两次必须一样')
+  assert.ok(existsSync(join(home, 'dev_id')), 'dev_id 要落盘复用')
+
+  const tooLong = await bili.sendMessage({ receiver_uid: 9, text: 'x'.repeat(501) })
+  assert.equal(tooLong.success, false)
+  assert.match(tooLong.error, /太长/)
+})
+
+test('call()：只读与写入都认；未知工具明确拒绝', () => {
   const { bili } = setup([[() => true, { code: 0 }]])
-  assert.throws(() => bili.call('bili_reply', {}), /还不支持 bili_reply/)
   assert.throws(() => bili.call('bili_diary', {}), /还不支持 bili_diary/)
+  assert.throws(() => bili.call('bili_nope', {}), /还不支持 bili_nope/)
 })

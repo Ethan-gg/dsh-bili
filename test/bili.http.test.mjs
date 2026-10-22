@@ -102,3 +102,37 @@ test('http：非 JSON 响应不抛，回一句人话（风控/接口变更）', 
   assert.equal(r.code, -1)
   assert.match(r.message, /非 JSON|风控|接口/)
 })
+
+test('http.post：写操作带 form body、不缓存；撞 412 也熔断', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'bili-http-post-'))
+  mkdirSync(join(home, '.cache'), { recursive: true })
+  const calls = []
+  let status = 200
+  const body = { code: 0, data: { rpid: 99 } }
+  const http = createBiliHttp({
+    home,
+    now: () => Date.parse('2026-10-22T18:00:00+08:00'),
+    sleep: async () => {},
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init })
+      return { ok: status === 200, status, text: async () => JSON.stringify(body) }
+    },
+  })
+  const r = await http.post('https://api.bilibili.com/x/v2/reply/add',
+    new URLSearchParams({ type: '1', oid: '42', message: '你好', csrf: 'J' }), { cookie: 'SESSDATA=S' })
+  assert.equal(r.code, 0)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].init.method, 'POST')
+  assert.match(String(calls[0].init.body), /oid=42/)
+  assert.equal(calls[0].init.headers['content-type'], 'application/x-www-form-urlencoded')
+  assert.match(String(calls[0].init.headers.cookie), /SESSDATA=S/)
+
+  // 412 ⇒ 熔断，之后再发不再打网络
+  status = 412
+  const r2 = await http.post('https://api.bilibili.com/x/v2/reply/add', new URLSearchParams({ a: '1' }))
+  assert.equal(r2.code, -412)
+  const n = calls.length
+  const r3 = await http.post('https://api.bilibili.com/x/v2/reply/add', new URLSearchParams({ a: '1' }))
+  assert.match(r3.message, /412|风控/)
+  assert.equal(calls.length, n, '熔断期间写操作也不许硬闯')
+})
