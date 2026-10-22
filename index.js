@@ -87,7 +87,7 @@ export const Config = !z ? undefined : z.object({
   personaPrompt: z.string().default('').extra('volatile', true),
   /** 私信监听：只认主人本人发来的私信，有新消息就回一句 · 2.0 起默认开（查私信不花 token，只有真有人发消息才回一句） */
   dmWatch: z.boolean().default(true).extra('volatile', true),
-  /** 私信监听间隔（分钟，最小 3） */
+  /** 私信监听间隔（分钟，最小 1 —— 代码与 schema 都是 1，别再写"最小 3"） */
   dmWatchMinutes: z.natural().default(1).extra('volatile', true),
   /** 私信回复每天最多几条（防刷） */
   dmReplyPerDay: z.natural().default(0).extra('volatile', true),
@@ -242,8 +242,15 @@ function reportMeta() {
     dmMode: 'only', dmUid: 0,
     keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '', reportLevel: 'full', replyToComments: false, replyPerRound: 1, favFolderId: 0,
   }
-  const normalize = (src, base) => {
-    const out = { ...base }
+  /**
+   * ⭐ 2.1 修掉的一个真 bug：`POST /api/bili-duty/config` 的字段白名单以前是**手写**的一串，
+   *   比 DEFAULTS 少了 7 个键 —— `personaPrompt` / `dmWatch` / `dmWatchMinutes` / `dmReplyPerDay` /
+   *   `dmOwnerUid` / `overlayMcp` / `favFolderId`。设置页明明 POST 了它们（client.js 的保存按钮就发
+   *   `{keywords, personaPrompt}`），界面显示"已保存"，盘上却一个字没变 ⇒ 用户以为人设/私信监听开了。
+   *   现在从 DEFAULTS 推导：**加字段只要加在 DEFAULTS 一处，路由自动认**，不会再漏。
+   */
+  const CFG_KEYS = Object.keys(DEFAULTS)
+  const normalize = (src, base) => {    const out = { ...base }
     for (const k of Object.keys(base)) {
       const v = src?.[k]
       if (v === undefined || v === null) continue
@@ -1062,8 +1069,12 @@ function reportMeta() {
     return list
   }
 
+  let overlaySeq = 0
   const ensureOverlay = () => {
-    const file = join(stateDir, 'headless-overlay.yml')
+    // ⭐ 2.1 修：以前固定写同一个 `headless-overlay.yml` —— 两轮重叠时**互相覆盖**
+    //    （手动「现在跑一轮」撞上定时那一轮就会）。现在每次一个唯一名字，这一轮结束就删。
+    overlaySeq += 1
+    const file = join(stateDir, `headless-overlay-${process.pid}-${Date.now()}-${overlaySeq}.yml`)
     const script = join(stateDir, 'mcp_server.py')
     const posix = (p) => String(p).replace(/\\/g, '/')
     const yml = []
@@ -1116,6 +1127,28 @@ function reportMeta() {
     }
     try { writeFileSync(file, yml.join('\n'), 'utf8'); return file } catch (e) { log(`写 overlay 失败：${e?.message ?? e}`); return null }
   }
+
+  /**
+   * 清扫上一轮没来得及删的 overlay（崩溃 / 强杀 / 断电都会留下）。
+   * ⚠️ 带 pid 的名字要**先看那个进程还活着没** —— 同一个机器上可能有两个宿主（桌面版 + web 版），
+   *    删掉别人正在用的 overlay，那一轮就白跑了。
+   */
+  const sweepOverlays = () => {
+    try {
+      for (const n of readdirSync(stateDir)) {
+        if (!/^headless-overlay.*\.yml$/.test(n)) continue
+        const m = /^headless-overlay-(\d+)-/.exec(n)
+        const pid = m ? Number(m[1]) : 0
+        if (pid && pid !== process.pid) {
+          try { process.kill(pid, 0); continue } catch { /* 进程已经没了 ⇒ 可以删 */ }
+        } else if (!pid) {
+          // 2.0 那个固定名字的文件：没有进程信息，只能在启动时（还没开跑）删掉
+        }
+        try { rmSync(join(stateDir, n), { force: true }) } catch { /* 删不掉不影响跑 */ }
+      }
+    } catch { /* 目录读不了就别扫了 */ }
+  }
+  try { sweepOverlays() } catch { /* 清扫失败绝不拦着插件加载 */ }
 
   /**
    * ⭐ 评论发出后复核（2026-10-16 加的行 —— 起因是用户在评论区反馈
@@ -1173,8 +1206,21 @@ function reportMeta() {
     } catch (e) { log(`补占位报告失败：${e?.message ?? e}`) }
   }
 
+  /**
+   * 「这一轮在不在跑」的锁：值是**为什么在跑**（`window:noon` / `manual`），空闲为 null。
+   * 只覆盖 `runDuty`（完整一轮）；私信回复那条是短任务、由 `dmBusy` + 跨进程 pid 锁管，不占这把。
+   */
+  let dutyBusy = null
   const runDuty = (why = 'window') => {
    try {
+    // ⭐ 2.1 修：**一轮在跑的时候不许再起一轮**。
+    //    以前没有这道闸：手动点「现在跑一轮」正好撞上定时那一轮 ⇒ 两个 headless 同时跑，
+    //    同一个视频可能被评论两次、报告互相覆盖、配额也算错（whale 那边叫"两次唤醒撞车"）。
+    //    锁只在**这一轮真的结束时**释放（见 child 的 exit / error），不是 spawn 返回就放。
+    if (dutyBusy) {
+      log(`这一轮没跑：上一轮还在跑（${dutyBusy}），不叠着开`)
+      return { started: false, why, busy: true, error: `上一轮还没结束（${dutyBusy}）` }
+    }
     refreshCfg()          // ⭐ 设置页刚改过的值要立刻生效（config 是就地改的，快照会过期）
     const dsh = resolveDsh()
     // ⭐ 找不到 dsh 就别硬跑：以前会退化成裸 `dsh` ⇒ spawn 失败、只留 exit 1 + 一串乱码 ✗
@@ -1195,6 +1241,7 @@ function reportMeta() {
     //      现在改成"设定由插件读进来、内联进提示词" ✓，cwd 回到插件家 ✓）
     const cwd = stateDir
     log(`刷B站开跑（${why}）：${dsh.command} ${args.slice(0, 3).join(' ')} …  cwd=${cwd}`)
+    dutyBusy = why            // 从这里开始算"在跑"，到 child exit / error 才放（见下）
     const child = spawn(dsh.command, args, {
       cwd,
       shell: dsh.shell,
@@ -1227,6 +1274,8 @@ function reportMeta() {
     child.stdout?.on('data', pick)
     child.stderr?.on('data', pick)
     child.on('exit', (code) => {
+      dutyBusy = null                                   // ⭐ 先放锁：后面的收尾再慢，也不该挡住下一轮
+      try { if (overlay) rmSync(overlay, { force: true }) } catch { /* 删不掉就留给启动时清扫 */ }
       log(`刷B站结束（${why}，code=${code}）`)
       stubReportIfMissing(code)   // ⭐ 没写报告就补一份占位 —— 别让使用者什么都看不到
     // ⭐ 2026-10-20：这一轮跑成了、并且使用者选了收藏夹 ⇒ 把挑中的存进去（后台做，别拖住收尾）
@@ -1247,9 +1296,14 @@ function reportMeta() {
       const verifyTimer = setTimeout(() => { Promise.resolve(runVerify('round')).catch((e) => log('复核异常：' + (e?.message ?? e))) }, 90_000)
       verifyTimer.unref?.()   // 别为了一次复核把宿主进程的退出拖住 90 秒
     })
-    child.on('error', (e) => log(`刷B站起不来：${e?.message ?? e}`))
+    child.on('error', (e) => {
+      dutyBusy = null                                   // spawn 失败也要放锁，否则永远卡在"在跑"
+      try { if (overlay) rmSync(overlay, { force: true }) } catch { /* 同上 */ }
+      log(`刷B站起不来：${e?.message ?? e}`)
+    })
     return { started: true, why, profile: cfg.headlessProfile, cwd, log: logFile }
    } catch (e) {
+    dutyBusy = null                                     // 同步抛错（路径不对之类）同样不许留锁
     log(`刷B站开跑失败（${why}）：${e?.stack ?? e}`)
     return { started: false, why, error: String(e?.message ?? e) }
    }
@@ -1277,8 +1331,12 @@ function reportMeta() {
         if (!inWindow(now, WINDOWS[k])) continue
         const key = `${today}:${k}`
         if (st.windows?.[key]) continue
+        // ⭐ 2.1：**先开跑、跑起来了才算这个窗口消费掉**。
+        //    以前是先记 `windows[key]=true` 再 runDuty ⇒ 一旦那一轮被"上一轮还在跑"挡回来，
+        //    这个窗口就永远标记成用过了 ⇒ 今天少跑一轮，而且用户完全看不出来。
+        const r = runDuty(`window:${k}`)
+        if (r && r.busy) return                     // 留给下一跳，别消费窗口
         bumpState({ windows: { ...(st.windows || {}), [key]: true }, count: roundsToday(now) + 1, lastRunAt: now.toISOString(), lastWhy: k })
-        runDuty(`window:${k}`)
         return
       }
     } catch (e) {
@@ -1337,7 +1395,10 @@ function reportMeta() {
       const pick = (buf) => { try { appendFileSync(logFile, toText(buf), 'utf8') } catch { /* 丢日志也不能抛 */ } }
       child.stdout?.on('data', pick)
       child.stderr?.on('data', pick)
-      child.on('exit', (code) => { log(`私信回复结束（code=${code}）`); rotateLogIfBig() })
+      child.on('exit', (code) => {
+        try { if (overlay) rmSync(overlay, { force: true }) } catch { /* 留给启动时清扫 */ }
+        log(`私信回复结束（code=${code}）`); rotateLogIfBig()
+      })
       return { ok: true }
     } catch (e) { log('私信回复出错：' + String(e?.message ?? e)); return { ok: false } }
   }
@@ -1944,9 +2005,8 @@ function reportMeta() {
     if (req.method === 'POST' && path === '/api/bili-duty/config') {
       const body = await readBody(req)
       const patch = {}
-      for (const k of ['perDay', 'peakValley', 'noon', 'night', 'autoComment', 'transcribe', 'asrModel',
-        'commentPerRound', 'mentionName', 'dmMode', 'dmUid',
-        'keywords', 'pythonPath', 'dshBin', 'headlessProfile', 'workspace', 'reportLevel', 'replyToComments', 'replyPerRound']) {
+      // ⭐ 2.1：从 DEFAULTS 推导（以前手写，漏了 7 个键 —— 见 CFG_KEYS 上面那段）
+      for (const k of CFG_KEYS) {
         if (k in body) patch[k] = body[k]
       }
       // ⭐ 范围钳制 + 两份都写（config.json / DSH 原生设置页），统一走 persistCfg —— 见文件上方

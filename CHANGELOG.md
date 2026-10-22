@@ -12,7 +12,18 @@
   传输层 `file` 已可用（`outbox.jsonl` / `inbox.jsonl`，按行号做游标），`dshim` / `http` 留占位。
   协议文档：`src/sync/contract.md`（给将来写云端的人看）。
 - **读到 BOM 不再当成"配置是空的"**：用户拿记事本改过 `config.json` 就能触发，表现是设置全丢。
-- 新增 `test/`（36 个用例，`node --test`）：配置钳制/映射、迁移幂等、协议签名、文件传输、桥的去重与限流。
+- **修掉 2.0 的 4 个 bug**（都是读代码能确认的，不是猜的）：
+  1. `POST /api/bili-duty/config` 的字段白名单以前**手写**，比 `DEFAULTS` 少了 7 个键
+     （`personaPrompt` / `dmWatch` / `dmWatchMinutes` / `dmReplyPerDay` / `dmOwnerUid` / `overlayMcp` / `favFolderId`）
+     ⇒ 设置页显示"已保存"、盘上没变。现在从 `DEFAULTS` 推导，加字段不会再漏。
+  2. **一轮在跑时不许再起一轮**：手动「现在跑一轮」撞上定时那一轮 ⇒ 同一视频可能被评论两次、报告互相覆盖。
+     锁在 child `exit` / `error` / 同步抛错三处释放；另外**定时那一跳改成"跑起来了才算消费窗口"**，
+     被拒时窗口留给下一跳（以前先标记再跑，被拒就等于今天少跑一轮）。
+  3. **overlay 文件名每次唯一**（`headless-overlay-<pid>-<时间>-<序号>.yml`），用完删；启动时清扫残留，
+     清扫前先确认那个 pid 还活着（同机可能有两个宿主）。
+  4. `duty.md` 把 `dmMode` 默认值写成 `off`，而代码默认是 `only` ⇒ 新装用户第一轮的理解与实现不一致。已按代码改。
+- 新增 `test/`（41 个用例，`node --test`）：配置钳制/映射、迁移幂等、协议签名、文件传输、桥的去重与限流，
+  外加 `test/regressions.test.mjs` —— 把上面这 4 个坑的形状钉住，防止以后被改回去。
 
 ## 2.0.0 — 2026-10-21
 
