@@ -19,9 +19,10 @@
  * ============================================================================
  */
 import { hhmm } from '../lib/config.mjs'
+import { dayOf } from '../lib/time.mjs'
 
-/** 本地日期 `YYYY-MM-DD`（`sv-SE` 这个 locale 恰好就是这个格式，比手拼可靠） */
-export const dayOf = (value = Date.now()) => new Date(value).toLocaleDateString('sv-SE')
+/** 本地日期 `YYYY-MM-DD`（统一在 `src/lib/time.mjs`，闸门也要用同一套口径） */
+export { dayOf }
 
 const pad = (n) => String(n).padStart(2, '0')
 const stamp = (day, minutes) => {
