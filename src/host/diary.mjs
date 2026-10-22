@@ -96,6 +96,24 @@ export function lastEntry(memoryDir, kind, { now = Date.now(), max = 400 } = {})
   return body.length > max ? body.slice(0, max) + '…' : body
 }
 
+/**
+ * 最近几天里**最后一条正文**（今天还没动笔就往前找）。
+ * 与 `lastEntry` 的差别：那个只看"今天"；而一轮醒来常在当天她还没写日记之前，
+ * 状态卡要的是"她上次写的什么"，所以这里跨天找。找不到返回空串（不抛）。
+ */
+export function lastEntryAny(memoryDir, kind, { now = Date.now(), days = 7, max = 400 } = {}) {
+  for (const d of listDiaries(memoryDir, kind, days)) {
+    let text = ''
+    try { text = readFileSync(d.path, 'utf8') } catch { continue }
+    const blocks = text.split(/\n## /).slice(1)
+    if (!blocks.length) continue
+    const body = blocks[blocks.length - 1].split('\n').slice(1).join('\n').trim()
+    if (!body) continue
+    return body.length > max ? body.slice(0, max) + '…' : body
+  }
+  return ''
+}
+
 /** 今天写了没（"日记照写"是 skip 那档的硬要求，得能核对） */
 export function hasToday(memoryDir, kind, now = Date.now()) {
   try { return existsSync(diaryPath(memoryDir, kind, now)) } catch { return false }

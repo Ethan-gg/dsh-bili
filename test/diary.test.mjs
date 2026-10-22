@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  appendDiary, diaryPath, hasToday, lastEntry, listDiaries, readDiary, todayDigest,
+  appendDiary, diaryPath, hasToday, lastEntry, lastEntryAny, listDiaries, readDiary, todayDigest,
 } from '../src/host/diary.mjs'
 
 const mem = () => mkdtempSync(join(tmpdir(), 'bili-diary-'))
@@ -104,5 +104,20 @@ test('读不到就说读不到：空目录返回空串，不抛', () => {
   assert.equal(readDiary(dir, 'owner'), '')
   assert.deepEqual(listDiaries(dir, 'self'), [])
   assert.equal(lastEntry(dir, 'self'), '')
+  assert.equal(lastEntryAny(dir, 'self'), '')
   assert.equal(hasToday(dir, 'self'), false)
+})
+
+test('lastEntryAny：今天还没写就往前找最近一天的最后一条（状态卡用）', () => {
+  const dir = mem()
+  appendDiary(dir, 'self', '昨天写的。', { now: at('2026-10-21T21:00:00') })
+  assert.equal(lastEntryAny(dir, 'self', { now: at('2026-10-22T12:00:00') }), '昨天写的。')
+
+  appendDiary(dir, 'self', '今天写的。', { now: at('2026-10-22T13:00:00') })
+  assert.equal(lastEntryAny(dir, 'self', { now: at('2026-10-22T14:00:00') }), '今天写的。')
+
+  // 另一本没有就是空串；超长照 lastEntry 的规矩截断
+  assert.equal(lastEntryAny(dir, 'owner', { now: at('2026-10-22T14:00:00') }), '')
+  appendDiary(dir, 'owner', 'z'.repeat(600), { now: at('2026-10-22T14:10:00') })
+  assert.match(lastEntryAny(dir, 'owner', { now: at('2026-10-22T14:20:00'), max: 50 }), /…$/)
 })

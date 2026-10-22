@@ -7,7 +7,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { convertWhaleQuota, migrateIfNeeded, parseSeenTable, planMigration } from '../src/lib/migrate.mjs'
+import { convertWhaleQuota, migrateIfNeeded, parseSeenTable, planMigration, rewriteMovedPath } from '../src/lib/migrate.mjs'
 import { fromLegacy } from '../src/lib/config.mjs'
 import { homePaths } from '../src/lib/paths.mjs'
 
@@ -25,6 +25,8 @@ function fakeMachine() {
   writeFileSync(join(old, 'config.json'), JSON.stringify({
     perDay: 6, peakValley: true, autoComment: true, mentionName: 'Gmnnm',
     dmMode: 'only', dmUid: 42, replyToComments: true, _set: ['perDay'],
+    // ⭐ 老配置里的绝对路径：家 rename 之后这个路径就失效了，迁移要跟着改（2026-10-22）
+    pythonPath: join(old, '.venv', 'Scripts', 'python.exe'),
   }), 'utf8')
   writeFileSync(join(old, 'duty.md'), '# 章程\n', 'utf8')
   writeFileSync(join(old, 'charter.sha256'), 'abc', 'utf8')
@@ -112,6 +114,10 @@ test('migrateIfNeeded：整目录搬过去 + 逐项合并 + 落标记', () => {
   assert.equal(cfg.account.mentionName, 'Gmnnm')
   assert.equal(cfg.dm.mode, 'only')
   assert.equal(cfg.share.enabled, true)
+  // ⭐ pythonPath 必须跟着家一起改到新路径 —— 否则升级后第一轮 MCP 直接
+  //   `spawn C:\...\bili-duty\.venv\Scripts\python.exe ENOENT`（2026-10-22 真机撞到）
+  assert.equal(cfg.run.pythonPath, join(p.home, '.venv', 'Scripts', 'python.exe'))
+  assert.ok(r.report.rewritten.some((x) => x.includes('run.pythonPath')), '搬迁报告要记下改了哪个路径')
 
   // ③ 人设 / 凭据 / 账本 / 日记
   assert.equal(readFileSync(p.persona, 'utf8').includes('一条鱼'), true)
@@ -185,4 +191,30 @@ test('migrateIfNeeded：dryRun 只算不写', () => {
   assert.equal(r.dryRun, true)
   assert.equal(existsSync(join(m.env.DSH_HOME, 'bili')), false)
   assert.equal(existsSync(join(m.old, 'seen.md')), true)
+})
+
+test('rewriteMovedPath：只改「就在老家里面」的绝对路径，其余原样', () => {
+  const oldRoot = join('C:', 'Users', 'Y', '.dsh', 'bili-duty')
+  const newRoot = join('C:', 'Users', 'Y', '.dsh', 'bili')
+  const sep = oldRoot.includes('\\') ? '\\' : '/'
+  const withSep = (...parts) => join(...parts)
+
+  // ① 就在老家里面 ⇒ 跟着家走（这就是 pythonPath 那个坑）
+  assert.equal(
+    rewriteMovedPath(withSep(oldRoot, '.venv', 'Scripts', 'python.exe'), oldRoot, newRoot),
+    withSep(newRoot, '.venv', 'Scripts', 'python.exe'),
+  )
+  // ② 'python' / 别处的解释器 ⇒ 一个字都不动
+  assert.equal(rewriteMovedPath('python', oldRoot, newRoot), 'python')
+  assert.equal(rewriteMovedPath(withSep('C:', 'Python311', 'python.exe'), oldRoot, newRoot), withSep('C:', 'Python311', 'python.exe'))
+  // ③ 只是名字像、并不是老家 ⇒ 不动（防误伤 bili-duty-old 这种目录）
+  assert.equal(rewriteMovedPath(oldRoot + '-old' + sep + 'x', oldRoot, newRoot), oldRoot + '-old' + sep + 'x')
+  // ④ 大小写不同也认（Windows 路径不区分大小写）
+  const upper = withSep(oldRoot.replace('bili-duty', 'BILI-DUTY'), '.venv', 'Scripts', 'python.exe')
+  assert.equal(rewriteMovedPath(upper, oldRoot, newRoot), withSep(newRoot, '.venv', 'Scripts', 'python.exe'))
+  // ⑤ 正斜杠写法（用户手填的 C:/…/python.exe）原样保留正斜杠
+  const fwd = oldRoot.replace(/\\/g, '/') + '/.venv/Scripts/python.exe'
+  assert.equal(rewriteMovedPath(fwd, oldRoot, newRoot), newRoot.replace(/\\/g, '/') + '/.venv/Scripts/python.exe')
+  // ⑥ 空值原样
+  assert.equal(rewriteMovedPath('', oldRoot, newRoot), '')
 })

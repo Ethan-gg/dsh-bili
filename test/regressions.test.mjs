@@ -32,30 +32,32 @@ test('待审草稿：入队靠工具、发出靠人点头，宿主三个接口�
   assert.match(CLIENT, /jpost\('\/pending\/approve'/, '要有批准按钮')
   assert.match(CLIENT, /jpost\('\/pending\/drop'/, '要有否掉按钮')
 
-  // ⚠️ 提示词**暂时不**让她调 bili_draft：那一轮（--profile headless）里没有这个插件，
-  //    她只能看见 MCP 侧那六个工具。硬写会让她白烧一轮。等 M2/M3 再把这句加回来。
-  assert.doesNotMatch(readFileSync(new URL('../prompts/duty.md', import.meta.url), 'utf8'), /一律用 `bili_draft`/)
+  // ⭐ 2026-10-22（M3 落地后改）：常驻会话里宿主工具都在 ⇒ 提示词**必须**要求
+  //    "陌生人回复一律先 bili_draft 进待审"，不许用 bili_reply 绕过本人点头。
+  const duty = readFileSync(new URL('../prompts/duty.md', import.meta.url), 'utf8')
+  assert.match(duty, /bili_draft\(bvid, rpid, text, why\)/, '要给出 bili_draft 的调用形状')
+  assert.match(duty, /不许直接 `bili_reply` 回陌生人/, '陌生人回复必须进待审队列，不许绕过本人')
+  assert.match(duty, /一次性进程/, '要写清"退回一次性进程"那轮没有这只工具时怎么办')
 })
 
 /**
  * 那一轮**实际能看见**的工具取决于跑法：
  *   · spawn（`--profile headless`）—— 那个 profile 里**没有这个插件**，只有 Python MCP 那六个
- *   · 常驻会话（M3）—— 她跑在插件自己的会话里，宿主工具也在
- * 所以提示词提到宿主专属工具时**必须带条件**（"手里有才写，没有就跳过"），不能假设某一种跑法。
+ *   · 常驻会话（M3，默认）—— 她跑在插件自己的会话里，宿主工具也在
+ * 2026-10-22 起：章程按**常驻会话**写成无条件要求；但必须写清"退回一次性进程的轮次怎么办"，
+ * 否则那个兜底跑法会去调根本不存在的工具、白烧一轮。
  */
 const MCP_TOOLS = ['bili_search', 'bili_subtitle', 'bili_comments', 'bili_video_info', 'bili_reply', 'bili_send_message']
 const HOST_ONLY_TOOLS = ['bili_diary', 'bili_draft', 'bili_done']
 
-test('提示词只许提「两种跑法都落到」的工具；宿主专属的必须带条件', () => {
+test('提示词提宿主专属工具时，必须写清「退回一次性进程」那一轮怎么办', () => {
   const duty = readFileSync(new URL('../prompts/duty.md', import.meta.url), 'utf8')
   const named = new Set([...duty.matchAll(/`?(bili_[a-z_]+)/g)].map((m) => m[1]))
   const unknown = [...named].filter((n) => ![...MCP_TOOLS, ...HOST_ONLY_TOOLS].includes(n))
   assert.deepEqual(unknown, [], '提示词提到了根本不存在的工具：' + unknown.join(', '))
-  for (const t of HOST_ONLY_TOOLS) {
-    if (!named.has(t)) continue
-    const ok = duty.includes('没有 `' + t + '`') || duty.includes('没有这个工具')
-    assert.ok(ok, `提到 ${t} 时必须写清"没有它怎么办"`)
-  }
+  // M3 之后章程本来就该点名宿主工具（无条件要求），所以这里不再要求"每处带没有就跳过"
+  assert.ok(HOST_ONLY_TOOLS.every((t) => named.has(t)), 'M3 之后章程要点名 bili_done / bili_diary / bili_draft')
+  assert.match(duty, /一次性进程/, '要写清另一种跑法（没有宿主工具）时怎么办')
 })
 
 test('绝不把 sessionController 写进 inject（whale 那个"永远 pending"的坑）', () => {
@@ -74,6 +76,30 @@ test('常驻会话的投递只保证"被收下"，所以必须有收尾兜底', 
   assert.match(wake, /mode: 'queue'/, '投递用 queue 模式，别用 steer 打断她正在做的事')
 })
 
+test('状态卡接在两条跑法上（常驻会话 / 一次性进程）', () => {
+  // 状态卡 = 每轮的"记忆锚点"：今天挑了几条 / 阈值 / 最近 7 天判重 / 她上次给自己写的
+  assert.match(INDEX, /const promptWithCard = \(\) =>/, '要有组装函数')
+  assert.match(INDEX, /const text = promptWithCard\(\)/, '常驻会话那条路要带上状态卡')
+  assert.match(INDEX, /args\.push\(promptWithCard\(\)\)/, '一次性进程那条路也要带上状态卡')
+  assert.match(INDEX, /buildStatusCard\(/, '用 src/host/card.mjs 拼，别在 index.js 里再写一份')
+  assert.match(INDEX, /cfgNew: readConfig\(cfgFile\)\.config/, 'readConfig 返回的是包壳（{config,...}），别把壳当配置传进去')
+  assert.match(INDEX, /lastEntryAny\(memoryDir, 'self'/, '"她上次给自己写的"要走日记的读入口')
+  // 卡拼不出来不许拦着一轮：必须在 try 里退回原提示词
+  assert.match(INDEX, /状态卡拼不出来（这一轮照跑）/, '失败要有日志、不能抛出去')
+})
+
+test('M2 能力层：只读三件走 Node、可退回 MCP；写入类不搬', () => {
+  assert.match(INDEX, /createNodeBili\(\{ home: stateDir, log \}\)/, '要真建 Node 能力层')
+  assert.match(INDEX, /const readCall = async \(toolName, args\) =>/, '只读工具要统一入口')
+  assert.match(INDEX, /Node 能力层失败（\$\{toolName\}）：\$\{why\} ⇒ 退回 Python MCP/, 'Node 抛错要能退回 MCP')
+  // 三个只读工具必须走 readCall；bili_reply / bili_done 这些写入/宿主工具不许被换掉
+  assert.match(INDEX, /return readCall\('bili_search'/, 'search 走能力层路由')
+  assert.match(INDEX, /return readCall\('bili_subtitle'/, 'subtitle 走能力层路由')
+  assert.match(INDEX, /return readCall\('bili_comments'/, 'comments 走能力层路由')
+  assert.match(INDEX, /const capabilityNow = \(\) =>/, '要有一处统一的开关判断')
+  assert.match(INDEX, /capability: 'node'/, '扁平 DEFAULTS 里要有 capability（干净机器默认不依赖 Python）')
+})
+
 
 test('宿主工具仍然在（交互会话与常驻会话里都能用）', () => {
   assert.match(INDEX, /name: 'bili_diary'/, '写日记的手（宿主侧）')
@@ -90,10 +116,10 @@ test('两本日记真有写入者（whale 那个「只有提示词、没有代�
   assert.match(INDEX, /if \(!cfgN \|\| !cfgN\.type \|\| cfgN\.type === 'none'\) return/, '默认安静')
   assert.match(INDEX, /if \(code === 0\) \{ try \{ notifyRound\(\)/, '只在跑成时推')
   assert.match(CLIENT, /diaryPush/, '设置页要有开关')
-  // 提示词里给了条件式要求（手里有才写），所以这里只守代码侧的写入口
-  assert.match(INDEX, /appendDiary\(memoryDir, kind,/, '写入口必须在')
+  // 2026-10-22：M3 之后章程改成无条件要求（每轮必写两本日记），这里守的是"要求还在"
   const duty = readFileSync(new URL('../prompts/duty.md', import.meta.url), 'utf8')
   assert.match(duty, /两本日记/, '提示词要提两本日记')
+  assert.match(duty, /每一轮都要写|必须/, '日记是无条件要求，不是"有工具才写"')
   assert.match(duty, /不许写成操作台账/, '日记不是日志，这条得写死')
 })
 

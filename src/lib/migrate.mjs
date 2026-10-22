@@ -72,6 +72,29 @@ export function convertWhaleQuota(quota) {
   }
 }
 
+/**
+ * 老配置里的**绝对路径**要跟着家一起搬。
+ * 例：`bili-duty/` 整体 rename 成 `bili/` 之后，老的
+ * `C:\Users\Y\.dsh\bili-duty\.venv\Scripts\python.exe` 已经不存在了 ——
+ * 原样抄进新 config 的话，升级后第一轮 MCP 直接 `spawn ... ENOENT`（真机踩到过）。
+ * 只改「就在老家里面」的值；`python`、别的盘、用户自己装的解释器一律不动。
+ * 分隔符风格跟着原值走（Windows 反斜杠 / POSIX 斜杠都行）。
+ */
+export function rewriteMovedPath(value, oldRoot, newRoot) {
+  const s = String(value ?? '')
+  if (!s) return s
+  const asPosix = (x) => String(x ?? '').replace(/\\/g, '/').replace(/\/+$/, '')
+  const oldPosix = asPosix(oldRoot)
+  const newPosix = asPosix(newRoot)
+  if (!oldPosix || !newPosix || oldPosix === newPosix) return s
+  const v = asPosix(s)
+  const oldLower = oldPosix.toLowerCase()
+  const vLower = v.toLowerCase()
+  if (vLower !== oldLower && !vLower.startsWith(oldLower + '/')) return s
+  const moved = newPosix + v.slice(oldPosix.length)
+  return s.includes('\\') ? moved.replace(/\//g, '\\') : moved
+}
+
 /** 只拷贝浅层的小文件（重目录整个跳过） */
 function copySmallTree(from, to, log) {
   if (!existsSync(from)) return 0
@@ -175,6 +198,12 @@ export function migrateIfNeeded({ env = process.env, log = () => {}, dryRun = fa
   }
 
   const built = fromLegacy(scrollRaw, whaleRaw, whaleNightRaw)
+  // ⭐ 2026-10-22：家是 rename 过来的 ⇒ 老配置里的绝对路径（主要是 run.pythonPath）还指着旧位置。
+  //    不跟着改的话，升级后第一轮 MCP 起不来（`spawn ...bili-duty\.venv... ENOENT`）—— 真机上撞到过。
+  const rewritten = []
+  const oldPy = built.config.run.pythonPath
+  const newPy = rewriteMovedPath(oldPy, L.scrollDir, p.home)
+  if (newPy !== oldPy) { built.config.run.pythonPath = newPy; rewritten.push(`run.pythonPath：${oldPy} → ${newPy}`) }
   try {
     writeConfig(p.config, built.config)
     imported.push('config.json')
@@ -232,7 +261,7 @@ export function migrateIfNeeded({ env = process.env, log = () => {}, dryRun = fa
     at: new Date().toISOString(),
     from: { scroll: L.scrollDir, whaleAi: L.whaleAiDir, whaleConfig: L.whaleConfig },
     to: p.home,
-    moved, imported, warnings,
+    moved, imported, warnings, rewritten,
     mapped: built.mapped, conflicts: built.conflicts, dropped: built.dropped,
   }
   try {
@@ -244,6 +273,7 @@ export function migrateIfNeeded({ env = process.env, log = () => {}, dryRun = fa
       `- 从：\`${L.scrollDir}\`、\`${L.whaleAiDir}\``,
       ...(moved.length ? ['', '## 整体搬过来的', ...moved.map((m) => `- ${m}`)] : []),
       ...(imported.length ? ['', '## 逐项合并的', ...imported.map((m) => `- ${m}`)] : []),
+      ...(rewritten.length ? ['', '## 跟着家一起改掉的路径', ...rewritten.map((m) => `- ${m}`)] : []),
       ...(warnings.length ? ['', '## 没搬成 / 需要注意的', ...warnings.map((m) => `- ${m}`)] : []),
       '',
       '> 老位置的东西**一个都没删**。确认新版一切正常后可以手动清掉。',
@@ -252,6 +282,7 @@ export function migrateIfNeeded({ env = process.env, log = () => {}, dryRun = fa
   } catch (e) { warnings.push(`写搬迁报告失败：${e?.message ?? e}`) }
 
   for (const m of imported) log(`搬进来：${m}`)
+  for (const m of rewritten) log(`路径已改到新家：${m}`)
   for (const w of warnings) log(`注意：${w}`)
   return { ok: warnings.length === 0, skipped: false, home: p.home, moved, imported, warnings, report }
 }
