@@ -32,9 +32,44 @@ test('待审草稿：入队靠工具、发出靠人点头，宿主三个接口�
   assert.match(CLIENT, /jpost\('\/pending\/approve'/, '要有批准按钮')
   assert.match(CLIENT, /jpost\('\/pending\/drop'/, '要有否掉按钮')
 
-  // 提示词必须让她走这条道
+  // ⚠️ 提示词**暂时不**让她调 bili_draft：那一轮（--profile headless）里没有这个插件，
+  //    她只能看见 MCP 侧那六个工具。硬写会让她白烧一轮。等 M2/M3 再把这句加回来。
+  assert.doesNotMatch(readFileSync(new URL('../prompts/duty.md', import.meta.url), 'utf8'), /一律用 `bili_draft`/)
+})
+
+/**
+ * 那一轮**实际能看见**的工具 = `mcpWhitelist()` 放行的那几个（MCP 侧）。
+ *
+ * 为什么这条测试重要：`--profile headless` 启动的那一轮**里没有这个插件**
+ * （插件只装在 web profile），所以她手里只有 Python MCP 注册的工具。
+ * 提示词里写一个她叫不出来的工具名，等于让她白烧一轮 —— 这种错在单测里看不见，只有真跑才暴露。
+ */
+const ROUND_TOOLS = ['bili_search', 'bili_subtitle', 'bili_comments', 'bili_video_info', 'bili_reply', 'bili_send_message']
+
+test('提示词里只许出现「那一轮真能调用」的工具名', () => {
   const duty = readFileSync(new URL('../prompts/duty.md', import.meta.url), 'utf8')
-  assert.match(duty, /一律用 `bili_draft`/, '陌生人必须先写草稿')
+  const named = new Set([...duty.matchAll(/`?(bili_[a-z_]+)/g)].map((m) => m[1]))
+  const unknown = [...named].filter((n) => !ROUND_TOOLS.includes(n))
+  assert.deepEqual(unknown, [], '提示词提到了那一轮拿不到的工具：' + unknown.join(', '))
+})
+
+test('宿主工具仍然在（交互会话里用得上；那一轮的可见性靠 MCP）', () => {
+  // 这两个工具在**设置/交互会话**里有效；等 M2（能力层 Node 化）或 M3（常驻会话）之后那一轮也能用。
+  assert.match(INDEX, /name: 'bili_diary'/, '写日记的手（宿主侧）')
+  assert.match(INDEX, /name: 'bili_draft'/, '待审草稿的手（宿主侧）')
+})
+
+test('两本日记真有写入者（whale 那个「只有提示词、没有代码」的坑不能重演）', () => {
+  assert.match(INDEX, /name: 'bili_diary'/, '她得有个写日记的手')
+  assert.match(INDEX, /appendDiary\(memoryDir, kind,/, '工具必须落到 diary.mjs 的唯一写入口')
+  assert.match(INDEX, /const notifyRound = async/, '一轮收尾要有推送动作')
+  assert.match(INDEX, /todayDigest\(memoryDir\)/, '推送里要带两本日记的摘要')
+  // 没配推送就什么都不做；跑砸了也不推
+  assert.match(INDEX, /if \(!cfgN \|\| !cfgN\.type \|\| cfgN\.type === 'none'\) return/, '默认安静')
+  assert.match(INDEX, /if \(code === 0\) notifyRound\(\)/, '只在跑成时推')
+  assert.match(CLIENT, /diaryPush/, '设置页要有开关')
+  // 提示词里暂时不要求她写日记（那一轮看不见 bili_diary），所以这里只守代码侧：
+  assert.match(INDEX, /appendDiary\(memoryDir, kind,/, '写入口必须在')
 })
 
 test('设置页给了新东西的入口，宿主也有对应的接口（否则是"看得见点不动"）', () => {

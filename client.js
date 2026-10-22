@@ -762,7 +762,7 @@ function WatchTab() {
             }, busy === 'notify' ? '正在发…' : '发条测试')),
           h(ToggleRow, {
             label: '每天把两本日记的摘要也推给我',
-            note: '给主人的那本 + 给自己的那本，各取最后一条。没写的那本会明说「今天没写」，不会悄悄留白。',
+            note: '需要上面先选一个推送方式；没选的话什么都不会发。两本各取最后一条，没写的那本会明说「今天没写」。',
             on: sw('diaryPush'),
             onChange: (v) => patch({ diaryPush: v }, '日记摘要推送'),
           })),

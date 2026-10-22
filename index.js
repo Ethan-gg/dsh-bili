@@ -40,6 +40,7 @@ import { evaluateShare, readLedger, recordShare as gateRecord, writeLedger } fro
 import { completePlan, makePlan } from './src/host/clock.mjs'
 import { sendNotify, TEST_MESSAGE } from './src/host/notify.mjs'
 import { addDraft, dropDraft, listDrafts, readQueue, takeDraft, writeQueue } from './src/host/review.mjs'
+import { appendDiary, todayDigest } from './src/host/diary.mjs'
 
 export const name = 'bili-scroll'
 export const inject = ['webServer', 'tools', 'settings']
@@ -676,6 +677,34 @@ function reportMeta() {
   }
 
   /**
+   * 一轮收尾的推送：今天挑了哪几条 + （可选）两本日记的摘要。
+   *
+   * 两条硬规矩：
+   *   ① **没配推送就什么都不做**（默认 `none`）—— 默认安静，是这个插件的性格
+   *   ② 推送失败只记日志，**绝不把这一轮算成失败**：报告和账本才是这一轮的产物
+   */
+  const notifyRound = async () => {
+    try {
+      const cfgN = notifyCfg()
+      if (!cfgN || !cfgN.type || cfgN.type === 'none') return
+      const day = dayKey()
+      let report = ''
+      try { report = readFileSync(join(outDir, `${day}.md`), 'utf8') } catch { /* 没写报告也照样推日记 */ }
+      const bvs = [...String(report).matchAll(/^###\s*(BV[0-9A-Za-z]{10})/gm)].map((m) => m[1])
+      const lines = [`今天挑了 ${bvs.length} 条` + (bvs.length ? '：' : '（今天没有值得留的）')]
+      if (bvs.length) lines.push(...bvs.map((b) => `· https://www.bilibili.com/video/${b}`))
+      if (cfg.diaryPush) {
+        const d = todayDigest(memoryDir)
+        lines.push('', '【给主人的】' + d.owner, '【给自己的】' + d.self)
+      }
+      const r = await sendNotify(cfgN, { title: `刷B站 · ${day}`, text: lines.join('\n') })
+      if (!r.ok) log(`推送没发出去（${r.backend}）：${r.error ?? '未知原因'}`)
+    } catch (e) {
+      log('推送摘要出错（已兜住，不影响这一轮）：' + String(e?.message ?? e))
+    }
+  }
+
+  /**
    * 通知配置：新形状直接读；2.0 的扁平配置用设置页能改的那三个键拼一份
    * （`notify.*` 在扁平层只暴露 type / url / cmd，其余走 config.json）。
    */
@@ -697,6 +726,26 @@ function reportMeta() {
    * 主人自己的消息不进这个队列（那条直接回）。
    */
   const pendingFile = join(stateDir, 'pending.json')
+  const memoryDir = join(stateDir, 'memory')
+
+  tool({
+    name: 'bili_diary',
+    description: '写今天的日记。**每人一本，一轮各写一条**：\n'
+      + '· `owner`：给本人看的 —— 今天为什么留这几条、有没有哪条犹豫过\n'
+      + '· `self`：给自己的 —— 不加滤镜，写砸了就写砸了\n'
+      + '⚠️ 日记**不是操作台账**：别写"本轮 dmMode=only""判重表已记"这种话。',
+    parameters: {
+      kind: { type: 'string', description: 'owner（给本人）/ self（给自己）' },
+      text: { type: 'string', description: '正文（一到三段，别写成流水账）' },
+    },
+    async execute(args) {
+      const kind = String(args.kind ?? '').toLowerCase()
+      if (kind !== 'owner' && kind !== 'self') return { ok: false, error: 'kind 只能是 owner 或 self' }
+      const r = appendDiary(memoryDir, kind, String(args.text ?? ''))
+      if (!r.ok) return { ok: false, error: r.error }
+      return { ok: true, kind, path: r.path, message: r.created ? '写了今天的第一条日记' : '接着写了一条' }
+    },
+  })
 
   tool({
     name: 'bili_draft',
@@ -1433,6 +1482,8 @@ function reportMeta() {
     if (code === 0 && Number(cfg.favFolderId) > 0) {
       favToday('auto').catch((error) => log('自动收藏出错（已兜住）：' + String(error?.message ?? error)))
     }
+      // ⭐ 收尾推送：配了推送方式才发（默认 none ⇒ 什么都不做）；失败不影响这一轮
+      if (code === 0) notifyRound().catch((e) => log('推送异常（已兜住）：' + String(e?.message ?? e)))
       rotateLogIfBig()            // ⭐ 日志别无声地长（三天 797KB ⇒ 一年约 100MB）
       // ⭐ 这一轮挑了几条：从今天的报告里数（上一轮挑的还在同一份文件里 ⇒ 数出来就是全天的账）
       try {
