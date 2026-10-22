@@ -41,6 +41,22 @@ test('定时那一跳先看跑成没跑成，再消费窗口（否则被拒一�
   assert.match(INDEX, /if \(r && r\.busy\) return\s*\/\/ 留给下一跳/, '被拒时不许把窗口标记成用过了')
 })
 
+test('闸门接在 bili_reply 上，且**没传 score 时不判**（老提示词零影响）', () => {
+  assert.match(INDEX, /const gateShare = \(args\) => \{/, '要有闸门入口')
+  assert.match(INDEX, /if \(args\?\.score === undefined \|\| args\?\.score === null/, '没传评分直接放行')
+  assert.match(INDEX, /const blocked = gateShare\(args\)/, 'bili_reply 里要真的调它')
+  assert.match(INDEX, /evaluateShare\(\{/, '判定要落到纯函数上，别在路由里手写一遍规则')
+  // 记账两头都要在：失败不记（额度白扣）
+  assert.match(INDEX, /if \(sentOk\) recordShare\(/, '发出去了才记账')
+  assert.match(INDEX, /writeLedger\(sharesFile, next\)/, '账本要落盘')
+})
+
+test('提示词要求她传 score / reason（否则闸门永远是空的）', () => {
+  const duty = readFileSync(new URL('../prompts/duty.md', import.meta.url), 'utf8')
+  assert.match(duty, /score=15/, '要给一个能照抄的例子')
+  assert.match(duty, /被拒了不要换个理由重试/, '被拒的处理方式必须写死，否则她会反复重试烧 token')
+})
+
 test('duty.md 里不再把 dmMode 的默认值写成 off（代码默认是 only）', () => {
   const duty = readFileSync(new URL('../prompts/duty.md', import.meta.url), 'utf8')
   assert.doesNotMatch(duty, /\| `off` \| 只发公开评论（默认）/, '那是 2.0 遗留的错误说明')

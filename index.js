@@ -36,6 +36,7 @@ import { resolveUid } from './lib/uid.mjs'
 import { loadCred as dmCred, listSessions as dmList, fetchMsgs as dmFetch } from './lib/dm.mjs'
 import { ensureUv } from './lib/uvfetch.mjs'
 import { applyFlat, flatView, isNewShape, readConfig, writeConfig } from './src/lib/config.mjs'
+import { evaluateShare, readLedger, recordShare as gateRecord, writeLedger } from './src/host/gate.mjs'
 
 export const name = 'bili-scroll'
 export const inject = ['webServer', 'tools', 'settings']
@@ -592,6 +593,69 @@ function reportMeta() {
     },
   })
 
+  /* ─────────────── 2.1：分享闸门 + 账本（`src/host/gate.mjs`）───────────────
+   * 接入方式刻意做成**向后兼容**：只有当调用方传了 `score` 时才判。
+   * 为什么：2.0 的提示词不带 score/reason，一上来就强制会被判"没理由"⇒ 全线拒绝 ⇒ 用户以为插件坏了。
+   * 所以新提示词（duty.md v4）负责"传评分"，宿主负责"评分不够就发不出去"。
+   * ⭐ 闸门必须在这一层：写在提示词里只是"尽量遵守"，写在这里是**发不出去**。
+   */
+  const sharesFile = join(stateDir, 'ledger', 'shares.json')
+  const gateShareCfg = () => {
+    const raw = readJson(cfgFile, {})
+    if (isNewShape(raw)) return readConfig(cfgFile).config.share
+    // 2.0 的扁平配置：能对上的字段就用，对不上的取保守默认
+    return {
+      enabled: Boolean(cfg.autoComment),
+      via: String(cfg.dmMode || 'off') === 'only' ? 'dm' : 'comment',
+      perRound: Math.max(0, Number(cfg.commentPerRound) || 0),
+      daily: 3, minScore: 13, sameVideoDays: 7, silenceDays: 3, silenceStopDays: 7,
+    }
+  }
+  /** 返回 null = 放行；返回对象 = 拒绝（直接作为工具结果给模型看） */
+  const gateShare = (args) => {
+    if (args?.score === undefined || args?.score === null || args?.score === '') return null
+    try {
+      const ledger = readLedger(sharesFile)      // 每次现读：别的宿主进程也可能在记
+      const r = evaluateShare({
+        share: gateShareCfg(),
+        entries: ledger.entries,
+        now: Date.now(),
+        bvid: String(args?.bvid ?? ''),
+        score: Number(args.score),
+        reason: String(args?.reason ?? ''),
+        rank: args?.rank,
+        via: String(cfg.dmMode || 'off') === 'only' ? 'dm' : 'comment',
+      })
+      if (r.ok) {
+        if (r.warn) log(`闸门放行但提个醒：${r.warn}`)
+        return null
+      }
+      log(`分享闸门拦下一条（${r.code}）：${r.message}`)
+      return { ok: false, blocked: true, code: r.code, hint: r.message }
+    } catch (e) {
+      // 闸门自己出问题不该让人一条都发不出去 —— 但从宽要有痕迹
+      log('分享闸门异常，本次放行：' + String(e?.message ?? e))
+      return null
+    }
+  }
+  /** 记一笔账（成功发出之后才记；失败不记，否则额度白扣） */
+  const recordShare = (args) => {
+    try {
+      const scored = args?.score !== undefined && args?.score !== null && args?.score !== ''
+      const isReply = Number(args?.rpid) > 0
+      const next = gateRecord(readLedger(sharesFile), {
+        bvid: String(args?.bvid ?? ''),
+        via: String(cfg.dmMode || 'off') === 'only' ? 'dm' : 'comment',
+        score: scored ? Number(args.score) : null,
+        reason: String(args?.reason ?? ''),
+        kind: isReply ? 'reply' : 'share',
+        // 只有"带评分的新式分享"才占额度：老路径记成流水，不占每天上限（否则升级当天就被自己卡死）
+        share: scored && !isReply,
+      })
+      writeLedger(sharesFile, next)
+    } catch (e) { log('记账失败（不影响这一条已发出）：' + String(e?.message ?? e)) }
+  }
+
   tool({
     name: 'bili_reply',
     description: '在视频下发评论（或回复某条评论）。这就是"@ 本人"那一下：短、干净、纯文本 @ 写在正文里。\n'
@@ -602,6 +666,9 @@ function reportMeta() {
       text: { type: 'string', description: '评论正文（短、干净、纯文本 @；别写敏感词）' },
       rpid: { type: 'number', description: '要回复的评论 id（0/不填 = 发新评论）' },
       force: { type: 'boolean', description: '本人当场让你发的，传 true 越过"自动评论关着"的闸' },
+      score: { type: 'number', description: '⭐ 自评 0–20：这条值不值得占用他一次注意力（≥ 设置里的门槛才会发；**不传就不判**，2.0 老提示词走这条路）' },
+      reason: { type: 'string', description: '⭐ 为什么留（至少 8 个字，说不清就别发）。传了 score 就必须传它' },
+      rank: { type: 'number', description: '1 = 本轮第一。只在"只推最好的那条"时用' },
     },
     async execute(args) {
       // dmMode==='only' 时本轮根本不该发公开评论 —— 在工具层也一并挡掉（除非当场 force）
@@ -615,11 +682,20 @@ function reportMeta() {
             : '要发评论得同时满足两条：设置里开着「自动评论并 @ 你」、并且填了「要 @ 谁」。或者本人当场让你发时传 force: true。',
         }
       }
-      return call('bili_reply', {
+      // ⭐ 2.1：分享闸门。**只在传了 score 时才判**（老提示词不传 ⇒ 完全走老路）
+      const blocked = gateShare(args)
+      if (blocked) return blocked
+      const out = await call('bili_reply', {
         bvid: String(args.bvid ?? ''),
         text: String(args.text ?? ''),
         rpid: Number(args.rpid) || 0,
       })
+      // 发出去了才记账（失败不记 —— 否则额度白扣一条）
+      const sentOk = (() => {
+        try { return JSON.parse(String(out))?.code === 0 } catch { return true }   // 解析不了就当成功（老接口只回文本）
+      })()
+      if (sentOk) recordShare({ ...args, text: String(args.text ?? '') })
+      return out
     },
   })
 
