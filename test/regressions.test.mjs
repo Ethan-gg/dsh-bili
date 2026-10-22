@@ -46,6 +46,23 @@ test('待审草稿：入队靠工具、发出靠人点头，宿主三个接口�
  */
 const ROUND_TOOLS = ['bili_search', 'bili_subtitle', 'bili_comments', 'bili_video_info', 'bili_reply', 'bili_send_message']
 
+test('绝不把 sessionController 写进 inject（whale 那个"永远 pending"的坑）', () => {
+  const m = /export const inject = (\[[^\]]*\])/.exec(INDEX)
+  assert.ok(m, 'index.js 要有 inject 声明')
+  assert.doesNotMatch(m[1], /sessionController/,
+    '声明它 ⇒ 没有这个服务的 profile 里整条插件不激活、设置页 404。要运行时 ctx.get')
+  assert.match(INDEX, /const sessionController = \(\) =>/, '要有运行时取用')
+  assert.match(INDEX, /ctx\.get\('sessionController'\)/, '取用要真的调 ctx.get')
+})
+
+test('常驻会话的投递只保证"被收下"，所以必须有收尾兜底', () => {
+  const wake = readFileSync(new URL('../src/host/wake.mjs', import.meta.url), 'utf8')
+  assert.match(wake, /acknowledgement|只保证"被收下"/, '注释里要写清这个语义（别人接手时最容易误解的地方）')
+  assert.match(wake, /createWatchdog/, '要有着门狗')
+  assert.match(wake, /mode: 'queue'/, '投递用 queue 模式，别用 steer 打断她正在做的事')
+})
+
+
 test('提示词里只许出现「那一轮真能调用」的工具名', () => {
   const duty = readFileSync(new URL('../prompts/duty.md', import.meta.url), 'utf8')
   const named = new Set([...duty.matchAll(/`?(bili_[a-z_]+)/g)].map((m) => m[1]))

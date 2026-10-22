@@ -148,6 +148,13 @@ export function apply(ctx, config) {
   }
   const stateDir = stateDirOf(ctx, (m) => { try { console.log('[bili-scroll] ' + m) } catch { /* 没控制台就算了 */ } })
   /**
+   * ⭐ M3：常驻会话的服务**运行时取**，绝不写进 `inject`。
+   * 写进 `inject` 的后果（whale 实测）：headless / 精简 profile 里没有这个服务 ⇒
+   * 整条插件永远 `pending (waiting for services: sessionController)` ⇒ **设置页 404、插件等于没装**。
+   * 这里的语义是：有就用（常驻会话，宿主工具她全能看见），没有就退回 spawn（老路，功能少但能跑）。
+   */
+  const sessionController = () => { try { return ctx.get('sessionController') || null } catch { return null } }
+  /**
    * ⚠️ 2026-10-19（用户 `天文星球` 的截图）：装转写依赖时 uv 直接 exit 2 ——
    *   `error: Could not acquire lock / failed to open file C:\Users\AP\AppData\Local\uv\cache\.lock: 拒绝访问 (os error 5)`
    *   ⇒ **uv 默认把缓存放在 `%LOCALAPPDATA%\uv\cache`**，那地方一旦没权限（企业策略 / 杀软 / 别的用户建的）就彻底装不动 ✗
