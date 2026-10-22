@@ -129,11 +129,14 @@ test('flatView / applyFlat：往返后关键字段一致（老代码还在用扁
     listen: { dm: true, dmIntervalSec: 120 },
     report: { level: 'off' },
     persona: { prompt: '人设' },
+    run: { mode: 'session', capability: 'python' },
   })
   const flat = flatView(cfg)
   assert.equal(flat.perDay, 8)
   assert.equal(flat.peakValley, true)
   assert.equal(flat.dmWatchMinutes, 2)
+  assert.equal(flat.runMode, 'session')
+  assert.equal(flat.capability, 'python')
   const back = applyFlat(DEFAULTS, flat)
   assert.equal(back.feed.perDay, 8)
   assert.deepEqual(back.feed.keywords, ['a', 'b'])
@@ -143,6 +146,15 @@ test('flatView / applyFlat：往返后关键字段一致（老代码还在用扁
   assert.equal(back.listen.dmIntervalSec, 120)
   assert.equal(back.report.level, 'off')
   assert.equal(back.persona.prompt, '人设')
+  assert.equal(back.run.mode, 'session')
+  assert.equal(back.run.capability, 'python')
+})
+
+test('capability：只认 node / python，写错回默认 node（M2 能力层开关）', () => {
+  assert.equal(clamp({ run: { capability: 'python' } }).run.capability, 'python')
+  assert.equal(clamp({ run: { capability: 'node' } }).run.capability, 'node')
+  assert.equal(clamp({ run: { capability: 'cobol' } }).run.capability, 'node')
+  assert.equal(clamp({}).run.capability, 'node', '默认必须是 node —— 干净机器（没 Python）也能跑')
 })
 
 test('applyFlat：只改传进来的那几个键，其余不动', () => {

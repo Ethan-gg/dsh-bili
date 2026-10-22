@@ -130,6 +130,13 @@ export const DEFAULTS = {
      * spawn = 只用老的一次性进程（能力少，但哪都能跑）
      */
     mode: 'auto',
+    /**
+     * ⭐ M2 能力层：只读三件（search / subtitle / comments）走哪边
+     *   node   = 内置 Node 实现（**失败自动退回 Python MCP**；干净机器不装 Python 也能跑）
+     *   python = 只用 Python MCP（老路，2.0 的行为）
+     * 写入类（发评论 / 私信）始终走 Python MCP —— 风控风险高，M2 这一刀不碰。
+     */
+    capability: 'node',
     headlessProfile: 'headless',
     dshBin: '',
     dshPath: '',
@@ -321,6 +328,7 @@ export function clamp(cfg = {}) {
   c.persona.prompt = String(c.persona.prompt ?? '').slice(0, 20000)
 
   c.run.mode = oneOf(c.run.mode, ['auto', 'session', 'spawn'], 'auto')
+  c.run.capability = oneOf(c.run.capability, ['node', 'python'], 'node')
   c.run.headlessProfile = String(c.run.headlessProfile ?? 'headless').trim().slice(0, 64) || 'headless'
   c.run.dshBin = String(c.run.dshBin ?? '').trim().slice(0, 1024)
   c.run.dshPath = String(c.run.dshPath ?? '').trim().slice(0, 1024)
@@ -418,6 +426,8 @@ export function flatView(cfg) {
     diaryPush: c.diary.push,
     /** 一轮怎么起：auto / session / spawn */
     runMode: c.run.mode,
+    /** 只读能力层走哪边：node（内置，失败退回 MCP）/ python（只用 MCP） */
+    capability: c.run.capability,
   }
 }
 
@@ -462,6 +472,7 @@ export function applyFlat(cfg, patch = {}) {
   if (has('notifyCmd')) c.notify.cmd = patch.notifyCmd
   if (has('diaryPush')) c.diary.push = patch.diaryPush
   if (has('runMode')) c.run.mode = patch.runMode
+  if (has('capability')) c.run.capability = patch.capability
   return clamp(c)
 }
 
