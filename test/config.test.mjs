@@ -268,3 +268,16 @@ test('作息扁平视图：窗口文本 / 今晚不看的概率 / 单次醒来�
   assert.equal(applyFlat(DEFAULTS, { skipChance: 2 }).schedule.skipChance, 0.95)
   assert.equal(applyFlat(DEFAULTS, { maxVideosPerWake: 0 }).feed.maxVideosPerWake, 1)
 })
+
+test('评论监听扁平视图：开关 / 模式 / 轮询分钟 都能往返', () => {
+  const cfg = applyFlat(DEFAULTS, { listenComment: true, listenCommentMode: 'auto', listenCommentMinutes: 10 })
+  assert.equal(cfg.listen.comments, true)
+  assert.equal(cfg.listen.commentMode, 'auto')
+  assert.equal(cfg.listen.commentIntervalSec, 600)
+  const flat = flatView(cfg)
+  assert.equal(flat.listenComment, true)
+  assert.equal(flat.listenCommentMode, 'auto')
+  assert.equal(flat.listenCommentMinutes, 10)
+  // 模式只认 auto / review
+  assert.equal(applyFlat(DEFAULTS, { listenCommentMode: 'auto-reply' }).listen.commentMode, 'review')
+})

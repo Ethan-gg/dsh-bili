@@ -37,7 +37,8 @@ import { loadCred as dmCred, listSessions as dmList, fetchMsgs as dmFetch } from
 import { ensureUv } from './lib/uvfetch.mjs'
 import { applyFlat, flatView, isNewShape, parseWindows, readConfig, writeConfig } from './src/lib/config.mjs'
 import { evaluateShare, readLedger, recordShare as gateRecord, writeLedger } from './src/host/gate.mjs'
-import { completePlan, makePlan } from './src/host/clock.mjs'
+import { completePlan, makePlan, windowsOf } from './src/host/clock.mjs'
+import { formatMaterial as formatCommentMaterial, pickNewReplies } from './src/host/listen.mjs'
 import { sendNotify, TEST_MESSAGE } from './src/host/notify.mjs'
 import { addDraft, dropDraft, listDrafts, readQueue, takeDraft, writeQueue } from './src/host/review.mjs'
 import { appendDiary, todayDigest, lastEntryAny } from './src/host/diary.mjs'
@@ -95,6 +96,12 @@ export const Config = !z ? undefined : z.object({
   skipChance: z.number().default(0.3).extra('volatile', true),
   /** 单次醒来最多看几条（默认 5） */
   maxVideosPerWake: z.natural().default(5).extra('volatile', true),
+  /** 评论监听：盯「回复我的」收件箱，有新回复才叫醒她（默认关） */
+  listenComment: z.boolean().default(false).extra('volatile', true),
+  /** 评论监听模式：auto = 自动回复 / review = 推送给我审核（走待审草稿 + IM） */
+  listenCommentMode: z.string().default('review').extra('volatile', true),
+  /** 评论监听轮询间隔（分钟，默认 5；别小于 1） */
+  listenCommentMinutes: z.natural().default(5).extra('volatile', true),
   /** 通知后端：none / desktop / webhook / command / dm / stdout / file（2.1） */
   notifyType: z.string().default('none').extra('volatile', true),
   /** webhook 地址（飞书/钉钉/企微/QQ 机器人）——报文格式由宿主按域名自动适配 */
@@ -301,6 +308,7 @@ function reportMeta() {
   const DEFAULTS = {
     dmWatch: true, dmWatchMinutes: 1, dmReplyPerDay: 0, dmOwnerUid: 0,
     personaPrompt: '', scheduleWindows: '', skipChance: 0.3, maxVideosPerWake: 5,
+    listenComment: false, listenCommentMode: 'review', listenCommentMinutes: 5,
     notifyType: 'none', notifyUrl: '', notifyCmd: '', diaryPush: true, runMode: 'auto',
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     dmMode: 'only', dmUid: 0,
@@ -351,6 +359,9 @@ function reportMeta() {
     if ('capability' in p) p.capability = ['node', 'python'].includes(String(p.capability)) ? String(p.capability) : 'node'
     if ('skipChance' in p) p.skipChance = Math.max(0, Math.min(Number(p.skipChance) || 0, 0.95))
     if ('maxVideosPerWake' in p) p.maxVideosPerWake = Math.max(1, Math.min(Number(p.maxVideosPerWake) || 5, 20))
+    if ('listenComment' in p) p.listenComment = Boolean(p.listenComment)
+    if ('listenCommentMode' in p) p.listenCommentMode = ['auto', 'review'].includes(String(p.listenCommentMode)) ? String(p.listenCommentMode) : 'review'
+    if ('listenCommentMinutes' in p) p.listenCommentMinutes = Math.max(1, Math.min(Number(p.listenCommentMinutes) || 5, 240))
     if ('syncTransport' in p) p.syncTransport = ['file', 'dshim', 'http'].includes(String(p.syncTransport)) ? String(p.syncTransport) : 'file'
     if ('syncConversations' in p) p.syncConversations = String(p.syncConversations ?? '').slice(0, 2000)
     if ('syncEndpoint' in p) p.syncEndpoint = String(p.syncEndpoint ?? '').trim().slice(0, 2048)
@@ -2199,10 +2210,82 @@ function reportMeta() {
 
 
 
+  /* ─────────────── 评论监听（2.1.1）：盯「回复我的」 ───────────────
+   * 不调模型的廉价轮询：只有真有人回复时才叫醒她（否则整晚 0 token）。
+   * 两种模式（设置页可选）：
+   *   · auto   自动回复 —— 她可以直接 bili_reply(force:true)
+   *   · review 推送给我审核 —— 她只写 bili_draft，草稿会推到本人 IM / 待审队列
+   */
+  const commentStateFile = join(stateDir, 'listen-comment.json')
+  let commentTimer = null
+  let commentBusy = false
+  /** 只在作息窗口里监听（没配窗口 = 不限） */
+  const insideWakeWindow = () => {
+    const sched = clockSchedule()
+    if (!sched) return true
+    const now = new Date()
+    const mins = now.getHours() * 60 + now.getMinutes()
+    return windowsOf(sched).some((w) => (w.wrap ? (mins >= w.start || mins < w.end - 1440) : (mins >= w.start && mins < w.end)))
+  }
+  async function commentTick() {
+    if (commentBusy) return
+    commentBusy = true
+    try {
+      refreshCfg()
+      if (!cfg.listenComment) return
+      if (!insideWakeWindow()) return
+      let feed
+      try { feed = await nodeBili().replyFeed({ pages: 2 }) } catch (e) {
+        log('评论监听：拉收件箱失败（' + String(e?.message ?? e) + '）')
+        return
+      }
+      const state = readJson(commentStateFile, {})
+      const { fresh, next } = pickNewReplies(feed.items, state)
+      if (!state.lastAt) {
+        writeJson(commentStateFile, next)
+        log('评论监听：基线已记录（之后的新回复才会叫醒她）')
+        return
+      }
+      if (!fresh.length) { writeJson(commentStateFile, next); return }
+      let woke = 0
+      for (const it of fresh.slice(0, 3)) {
+        let bvid = ''
+        if (Number(it.business) === 1 && it.oid) {
+          try { bvid = await nodeBili().bvidByAid(it.oid) } catch { /* 拿不到就用 oid */ }
+        }
+        const text = formatCommentMaterial(it, { mode: cfg.listenCommentMode, bvid })
+        const r = await deliverToSession({ sessionController: sessionController(), cwd: stateDir, text })
+        if (r.ok) woke += 1
+        else log('评论监听：叫醒她失败（' + String(r.error ?? '') + '）')
+        try {
+          appendMemoryEvent({
+            id: 'comment-' + it.id, at: new Date().toISOString(), type: 'message.in',
+            payload: { source: 'bilibili-comment', who: it.who, text: it.text, oid: it.oid, root: it.root, parent: it.parent },
+          })
+        } catch { /* 忽略 */ }
+      }
+      writeJson(commentStateFile, next)
+      log(`评论监听：收到 ${fresh.length} 条新回复（模式 ${cfg.listenCommentMode}）⇒ 叫醒她 ${woke} 次`)
+    } catch (e) {
+      log('评论监听这一跳出错（已兜住）：' + String(e?.message ?? e))
+    } finally { commentBusy = false }
+  }
+  function startCommentWatch() {
+    try {
+      if (commentTimer) { clearInterval(commentTimer); commentTimer = null }
+      const mins = Math.max(1, Number(cfg.listenCommentMinutes) || 5)
+      commentTimer = setInterval(() => { commentTick().catch((e) => log('评论定时器异常：' + String(e?.message ?? e))) }, mins * 60_000)
+      if (commentTimer.unref) commentTimer.unref()
+      log(`评论监听：${cfg.listenComment ? '已开' : '关着'}（每 ${mins} 分钟查一次；模式 ${cfg.listenCommentMode}）`)
+    } catch (e) { log('启评论监听失败：' + String(e?.message ?? e)) }
+  }
+
   try { MIG_200() } catch (e) { log('迁移没跑：' + String(e?.message ?? e)) }
 
   try { startDmWatch() } catch (e) { log('私信监听没起来：' + String(e?.message ?? e)) }
   ctx.effect(() => () => { try { if (dmTimer) clearInterval(dmTimer) } catch { /* 忽略 */ } }, 'bili-duty: 私信监听')
+  try { startCommentWatch() } catch (e) { log('评论监听没起来：' + String(e?.message ?? e)) }
+  ctx.effect(() => () => { try { if (commentTimer) clearInterval(commentTimer) } catch { /* 忽略 */ } }, 'bili-duty: 评论监听')
 
   /* ─────────────── HTTP（设置页用） ─────────────── */
 

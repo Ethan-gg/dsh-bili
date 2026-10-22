@@ -77,6 +77,7 @@ export const DEFAULTS = {
   /** 互动：听谁说话 */
   listen: {
     comments: false,
+    commentMode: 'review',   // auto = 自动回复 · review = 推给我审核（走待审草稿 + IM）
     commentIntervalSec: 300,
     scope: 'both',         // both | reply
     oncePerPerson: false,
@@ -289,6 +290,7 @@ export function clamp(cfg = {}) {
   c.share.silenceStopDays = int(c.share.silenceStopDays, c.share.silenceDays, 180, DEFAULTS.share.silenceStopDays)
 
   c.listen.comments = bool(c.listen.comments, DEFAULTS.listen.comments)
+  c.listen.commentMode = oneOf(c.listen.commentMode, ['auto', 'review'], DEFAULTS.listen.commentMode)
   c.listen.commentIntervalSec = int(c.listen.commentIntervalSec, 60, 86400, DEFAULTS.listen.commentIntervalSec)
   c.listen.scope = oneOf(c.listen.scope, ['both', 'reply'], DEFAULTS.listen.scope)
   c.listen.oncePerPerson = bool(c.listen.oncePerPerson, DEFAULTS.listen.oncePerPerson)
@@ -422,6 +424,10 @@ export function flatView(cfg) {
     skipChance: c.schedule.skipChance,
     /** 单次醒来最多看几条 */
     maxVideosPerWake: c.feed.maxVideosPerWake,
+    /** 评论监听：开关 / 模式（auto 自动回复 · review 推给我审核） / 轮询分钟 */
+    listenComment: c.listen.comments,
+    listenCommentMode: c.listen.commentMode,
+    listenCommentMinutes: Math.max(1, Math.round(c.listen.commentIntervalSec / 60)),
     /** 通知：设置页只直接暴露最常用的三个（类型 / 地址 / 命令），其余走 config.json */
     notifyType: c.notify.type,
     notifyUrl: c.notify.url,
@@ -480,6 +486,9 @@ export function applyFlat(cfg, patch = {}) {
   if (has('scheduleWindows')) c.schedule.windows = parseWindows(patch.scheduleWindows).windows.slice(0, 6)
   if (has('skipChance')) c.schedule.skipChance = patch.skipChance
   if (has('maxVideosPerWake')) c.feed.maxVideosPerWake = patch.maxVideosPerWake
+  if (has('listenComment')) c.listen.comments = Boolean(patch.listenComment)
+  if (has('listenCommentMode')) c.listen.commentMode = patch.listenCommentMode
+  if (has('listenCommentMinutes')) c.listen.commentIntervalSec = Math.max(1, Number(patch.listenCommentMinutes) || 5) * 60
   if (has('notifyType')) c.notify.type = patch.notifyType
   if (has('notifyUrl')) c.notify.url = patch.notifyUrl
   if (has('notifyCmd')) c.notify.cmd = patch.notifyCmd

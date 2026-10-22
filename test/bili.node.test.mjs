@@ -239,6 +239,28 @@ test('frames：有 ffmpeg 就抽帧（URL/参数对），没 ffmpeg 就明确说
   assert.match(r2.message, /没装 ffmpeg/)
 })
 
+test('replyFeed：把「回复我的」收件箱归一化；bvidByAid 取 BV', async () => {
+  const { bili } = setup([
+    [(u) => u.pathname.endsWith('/x/msgfeed/reply'), {
+      code: 0,
+      data: {
+        last_view_at: 111, cursor: '',
+        items: [{
+          id: 7, reply_time: 222, user: { nickname: '小明', mid: 9 },
+          item: { business_id: 1, subject_id: 42, root_id: 100, source_id: 101, target_reply_content: '你好' },
+        }],
+      },
+    }],
+    [(u) => u.pathname.endsWith('/view') && u.searchParams.get('aid') === '42', { code: 0, data: { bvid: 'BV1xx411c7mD' } }],
+  ])
+  const feed = await bili.replyFeed()
+  assert.equal(feed.lastViewAt, 111)
+  assert.deepEqual(feed.items[0], {
+    id: '7', at: 222, who: '小明', mid: '9', business: 1, oid: '42', root: '100', parent: '101', text: '你好',
+  })
+  assert.equal(await bili.bvidByAid(42), 'BV1xx411c7mD')
+})
+
 test('call()：只读与写入都认；未知工具明确拒绝', () => {
   const { bili } = setup([[() => true, { code: 0 }]])
   assert.throws(() => bili.call('bili_diary', {}), /还不支持 bili_diary/)

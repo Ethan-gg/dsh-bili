@@ -231,3 +231,15 @@ test('duty.md 里不再把 dmMode 的默认值写成 off（代码默认是 only�
   assert.doesNotMatch(duty, /\| `off` \| 只发公开评论（默认）/, '那是 2.0 遗留的错误说明')
   assert.match(duty, /新装默认就是这个/, '要写清默认是 only')
 })
+
+test('评论监听：廉价轮询 + 两种模式（自动回复 / 推给我审核）+ 设置页入口都在', () => {
+  assert.match(INDEX, /async function commentTick\(\)/, '要有评论监听的轮询')
+  assert.match(INDEX, /pickNewReplies\(feed\.items, state\)/, '新回复判定要用纯函数')
+  assert.match(INDEX, /formatCommentMaterial\(it, \{ mode: cfg\.listenCommentMode/, '叫醒文案要按模式区分')
+  assert.match(INDEX, /startCommentWatch\(\)/, '要真的把定时器起起来')
+  assert.match(INDEX, /insideWakeWindow\(\)/, '只在作息窗口里监听（省钱）')
+  assert.match(INDEX, /listenCommentMode/, '要能改模式')
+  assert.match(CLIENT, /评论监听/, '设置页要有开关')
+  assert.match(CLIENT, /推送给我审核/, '要有"给我审核"这个选项')
+  assert.match(CLIENT, /自动回复评论/, '要有"自动回复"这个选项')
+})

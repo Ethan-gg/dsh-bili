@@ -268,6 +268,8 @@ function WatchTab() {
       const [replyPer, setReplyPer] = React.useState(null)
       const [dmUid, setDmUid] = React.useState(null)        // 私信收件人 UID（本地草稿）
       const [dmWatch, setDmWatch] = React.useState(null)          // 私信双向开关
+      const [commentListen, setCommentListen] = React.useState(null) // 评论监听开关
+      const [commentMode, setCommentMode] = React.useState(null)     // 评论监听模式：auto / review
       const [dmMode, setDmMode] = React.useState(null)      // 投递方式：off / only / both
       const [mention, setMention] = React.useState(null)
       const [schedRows, setSchedRows] = React.useState(null)        // 作息窗口（[{start,end,wakes}]，本地草稿）
@@ -319,6 +321,8 @@ function WatchTab() {
         if (cfg && dmUid === null) setDmUid(cfg.dmUid ? String(cfg.dmUid) : '')
         if (cfg && dmMode === null) setDmMode(cfg.dmMode || 'only')
         if (cfg && dmWatch === null) setDmWatch(cfg.dmWatch !== false)   // 2.0 起默认开
+        if (cfg && commentListen === null) setCommentListen(Boolean(cfg.listenComment))
+        if (cfg && commentMode === null) setCommentMode(cfg.listenCommentMode || 'review')
         if (cfg && favId === null) setFavId(String(cfg.favFolderId ?? 0))
         if (cfg && schedRows === null) setSchedRows(parseSchedRows(cfg.scheduleWindows || ''))
         if (cfg && skipChance === null) setSkipChance(cfg.skipChance ?? 0.3)
@@ -820,6 +824,20 @@ function WatchTab() {
             on: Boolean(dmWatch),
             onChange: (v) => { setDmWatch(v); patch({ dmWatch: v }, '私信双向') },
           }),
+          h(ToggleRow, {
+            label: '评论监听（有人回复我的评论就处理）',
+            note: '默认关。开着时每 5 分钟看一眼「回复我的」，有新回复才叫醒她 —— 没人回就不花 token；只在作息窗口里听。',
+            on: Boolean(commentListen),
+            onChange: (v) => { setCommentListen(v); patch({ listenComment: v }, '评论监听') },
+          }),
+          commentListen ? h('div', { 'data-bd-sub': '' },
+            h('div', { 'data-bd-label': '' }, '有新回复时怎么办'),
+            h('select', {
+              'data-bd-input': '', value: commentMode ?? 'review',
+              onChange: (e) => { setCommentMode(e.target.value); patch({ listenCommentMode: e.target.value }, '评论监听模式') },
+            },
+              h('option', { value: 'review' }, '推送给我审核 —— 她只写草稿，我点头后才发（默认，最稳）'),
+              h('option', { value: 'auto' }, '自动回复评论 —— 她直接回，不用我点头（风险高）'))) : null,
           h(ToggleRow, {
             label: '本地转写没字幕的视频',
             note: '默认关；开了以后，没字幕的视频会在本机转写一遍（不花 API 钱）',

@@ -293,6 +293,51 @@ export function createNodeBili({ home, fetchImpl, now, sleep, ffmpegBin, runFfmp
     }
   }
 
+  /* ───────────────────── 评论监听用的只读接口 ───────────────────── */
+
+  /**
+   * 「回复我的」收件箱（只读）：评论监听的数据源。
+   * ⚠️ 收件箱字段语义不可靠（whale 实测：`item.title` 不总是新回复正文）——
+   * 这里把 target/source/title 依次兜底，正文只当"摘要"，真判断前让 agent 自己读楼层。
+   */
+  async function replyFeed({ pages = 2 } = {}) {
+    const out = []
+    let cursor = ''
+    let lastViewAt = 0
+    for (let p = 0; p < Math.max(1, Math.min(3, Number(pages) || 2)); p += 1) {
+      const u = `${API}/x/msgfeed/reply?platform=web&build=0&mobi_app=web` + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '')
+      const j = await http.get(u, headers('https://www.bilibili.com/'))
+      if (Number(j?.code) !== 0) throw new Error(`回复收件箱拉取失败 code=${j?.code} ${j?.message ?? ''}`)
+      if (p === 0) lastViewAt = Number(j?.data?.last_view_at ?? 0)
+      const items = j?.data?.items ?? []
+      for (const it of items) {
+        out.push({
+          id: String(it?.id ?? ''),
+          at: Number(it?.reply_time ?? it?.at_time ?? 0),
+          who: String(it?.user?.nickname ?? ''),
+          mid: String(it?.user?.mid ?? ''),
+          business: Number(it?.item?.business_id ?? 1),
+          oid: String(it?.item?.subject_id ?? ''),
+          root: String(it?.item?.root_id ?? ''),
+          parent: String(it?.item?.source_id ?? ''),
+          text: String(it?.item?.target_reply_content || it?.item?.source_content || it?.item?.title || '').slice(0, 500),
+        })
+      }
+      cursor = String(j?.data?.cursor ?? '')
+      if (!cursor || items.length === 0) break
+    }
+    const seen = new Set()
+    return { items: out.filter((x) => x.id && (seen.has(x.id) ? false : (seen.add(x.id), true))), lastViewAt }
+  }
+
+  /** aid → bvid（评论监听拿到 oid 后要用 bvid 调 bili_reply / bili_draft） */
+  async function bvidByAid(aid) {
+    const a = Number(aid)
+    if (!a) return ''
+    const j = await http.get(`${API}/x/web-interface/view?aid=${a}`, headers('https://www.bilibili.com/'))
+    return String(j?.data?.bvid ?? '')
+  }
+
   /* ───────────────────── 看弹幕 / 看画面（M2 最后一块）───────────────────── */
 
   /** 弹幕：热区 + 高频梗 + 抽样（只读；没有弹幕就返回 count=0，不是错） */
@@ -380,6 +425,8 @@ export function createNodeBili({ home, fetchImpl, now, sleep, ffmpegBin, runFfmp
     sendMessage,
     danmaku,
     frames,
+    replyFeed,
+    bvidByAid,
     /** 宿主按工具名统一路由（和 MCP 的 `call(name, args)` 对得上） */
     call(name, args = {}) {
       const fn = METHODS[name]
