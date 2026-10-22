@@ -1,0 +1,29 @@
+# 第三方代码与署名说明
+
+本插件（`dsh-bili-scroll` / 刷B站）本体以 **MIT** 协议发布，正文见仓库根目录的 `LICENSE`。
+
+## 内含第三方代码
+
+- 目录：`vendor/bilibili-mcp/`
+- 项目：**bilibili-mcp**
+- 许可证：**MIT**，Copyright (c) 2026 AGI_Ananas
+- 完整许可见该目录下的 `LICENSE`
+
+## 移植自其他 MIT 项目的部分（2.1 起）
+
+2.1 开始，本项目吸收 [`dsh-bili-whale`](https://github.com/Alterssss/dsh-bili-whale)（**MIT**）的部分设计与代码：
+
+- `tools/lib/night-plan.mjs`（生物钟计划器）→ 计划迁入 `src/host/clock.mjs`
+- `tools/lib/share-policy.mjs`（分享闸门）→ 计划迁入 `src/host/gate.mjs`
+- `tools/commands/notify.mjs`（七种通知后端）→ 计划迁入 `src/host/notify.mjs`
+- `tools/lib/runtime.mjs`（Electron 里找真 node）→ 计划迁入 `src/lib/node-runtime.mjs`
+
+迁移时会保留原文件的 MIT 版权声明；两份项目都是 MIT，允许改、再发、商用。
+
+## 关于版权署名
+
+`LICENSE` 第一行写的是 `Copyright (c) 2026 c1overzz`。
+如果你要基于本仓库做二次分发，保留这一行和 MIT 正文即可，不必另行取得授权（MIT 本身就允许改、再发、商用）。
+
+---
+*本文件只是说明，不构成额外限制。*
