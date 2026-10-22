@@ -39,6 +39,7 @@ import { applyFlat, flatView, isNewShape, parseWindows, readConfig, writeConfig 
 import { evaluateShare, readLedger, recordShare as gateRecord, writeLedger } from './src/host/gate.mjs'
 import { completePlan, makePlan } from './src/host/clock.mjs'
 import { sendNotify, TEST_MESSAGE } from './src/host/notify.mjs'
+import { addDraft, dropDraft, listDrafts, readQueue, takeDraft, writeQueue } from './src/host/review.mjs'
 
 export const name = 'bili-scroll'
 export const inject = ['webServer', 'tools', 'settings']
@@ -690,6 +691,45 @@ function reportMeta() {
       path: '',
     }
   }
+
+  /* ─────────────── 2.1：待审草稿（`src/host/review.mjs`）───────────────
+   * 陌生人的回复**先写草稿、本人点头才发**。她那边只能"入队"，发不出去 —— 这才是"先审后发"。
+   * 主人自己的消息不进这个队列（那条直接回）。
+   */
+  const pendingFile = join(stateDir, 'pending.json')
+
+  tool({
+    name: 'bili_draft',
+    description: '把一条回复**写成草稿**交给本人审核（陌生人的回复一律走这里；主人本人的消息才直接用 bili_reply）。\n'
+      + '写进来之后这条**还不会发出去** —— 等本人在设置页点「批准」。',
+    parameters: {
+      bvid: { type: 'string', description: 'BV号' },
+      text: { type: 'string', description: '回复正文（短、干净；不要写设置、路径、隐私）' },
+      rpid: { type: 'number', description: '要回复的那条评论 id' },
+      who: { type: 'number', description: '对方 UID（不知道就不填）' },
+      why: { type: 'string', description: '为什么该回他（一句话，给本人看）' },
+    },
+    async execute(args) {
+      if (!cfg.replyToComments) return { ok: false, blocked: true, hint: '「回复评论」关着 —— 这一轮不该回任何人' }
+      const text = String(args.text ?? '').trim()
+      if (!text) return { ok: false, error: '草稿正文是空的' }
+      const r = addDraft(readQueue(pendingFile), {
+        kind: 'reply',
+        bvid: String(args.bvid ?? ''),
+        parent: Number(args.rpid) || null,
+        who: Number(args.who) || null,
+        src: 'listing',
+        message: text,
+        note: String(args.why ?? ''),
+      })
+      if (!r.ok) return { ok: false, error: r.error }
+      writeQueue(pendingFile, r.queue)
+      return {
+        ok: true, queued: true, id: r.id, dup: Boolean(r.dup),
+        message: r.dup ? '这条已经在待审队列里了（不会重复入队）' : '已写进待审队列 —— 本人批准后才会发出去',
+      }
+    },
+  })
 
   tool({
     name: 'bili_reply',
@@ -2173,6 +2213,57 @@ function reportMeta() {
       const { clean, host } = await persistCfg(patch)
       log(`设置已更新：${JSON.stringify(clean)}（DSH 那边${host.ok ? '已同步' : '没写成：' + host.error}）`)
       return sendJson(res, 200, { ok: true, config: cfg, host })
+    }
+
+    if (req.method === 'GET' && path === '/api/bili-duty/pending') {
+      const listed = listDrafts(readQueue(pendingFile))
+      // 顺手把过期的落盘（否则列表里看不见、文件里却一直在长）
+      if (listed.expired > 0) writeQueue(pendingFile, { v: 1, items: listed.items })
+      return sendJson(res, 200, { ok: true, items: listed.items, expired: listed.expired })
+    }
+
+    if (req.method === 'POST' && path === '/api/bili-duty/pending/drop') {
+      const body = await readBody(req)
+      const id = String(body?.id ?? '')
+      if (!id) return sendJson(res, 400, { ok: false, error: '需要 id' })
+      const r = dropDraft(readQueue(pendingFile), id)
+      writeQueue(pendingFile, r.queue)
+      if (r.removed) log(`待审草稿被否掉：${id}`)
+      return sendJson(res, 200, { ok: r.removed > 0, removed: r.removed })
+    }
+
+    if (req.method === 'POST' && path === '/api/bili-duty/pending/approve') {
+      const body = await readBody(req)
+      const id = String(body?.id ?? '')
+      if (!id) return sendJson(res, 400, { ok: false, error: '需要 id' })
+      // ⭐ 先取走再发：不取走就发 ⇒ 连点两次会发两条；发失败必须放回，否则草稿悄悄没了
+      const taken = takeDraft(readQueue(pendingFile), id)
+      if (!taken.item) return sendJson(res, 404, { ok: false, error: '队列里没有这条（可能已经发过）' })
+      writeQueue(pendingFile, taken.queue)
+      const item = taken.item
+      let out = ''
+      let ok = false
+      try {
+        out = String(await call('bili_reply', {
+          bvid: String(item.bvid ?? ''),
+          text: String(item.message ?? ''),
+          rpid: Number(item.parent) || 0,
+        }))
+        try { ok = JSON.parse(out)?.code === 0 } catch { ok = !/error|失败|false/i.test(out) }
+      } catch (e) {
+        out = String(e?.message ?? e)
+        ok = false
+      }
+      if (!ok) {
+        // 发失败 ⇒ 放回队列并说清楚（"批准了却没发出去"是最容易让人误会的一种状态）
+        const back = addDraft(taken.queue, item, {})
+        writeQueue(pendingFile, back.queue)
+        log(`待审草稿发送失败，已放回队列：${id}`)
+        return sendJson(res, 200, { ok: false, error: '发送失败，草稿已放回队列', out })
+      }
+      recordShare({ bvid: item.bvid, rpid: item.parent, text: item.message })
+      log(`待审草稿已批准并发出：${id}`)
+      return sendJson(res, 200, { ok: true, out: out.slice(-600) })
     }
 
     if (req.method === 'POST' && path === '/api/bili-duty/notify-test') {

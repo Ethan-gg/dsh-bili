@@ -14,6 +14,29 @@ import { readFileSync } from 'node:fs'
 const INDEX = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
 const CLIENT = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 
+test('待审草稿：入队靠工具、发出靠人点头，宿主三个接口都在', () => {
+  // 她只能"入队"，发不出去 —— 这是"先审后发"的全部意义
+  assert.match(INDEX, /name: 'bili_draft'/, '要有 bili_draft 工具')
+  assert.match(INDEX, /path === '\/api\/bili-duty\/pending'/, '要有列表接口')
+  assert.match(INDEX, /pending\/approve/, '要有批准接口')
+  assert.match(INDEX, /pending\/drop/, '要有否掉接口')
+
+  // 批准流程的三条语义：先取走（防连点发两条）/ 失败放回（别把草稿弄丢）/ 成功才记账
+  assert.match(INDEX, /const taken = takeDraft\(readQueue\(pendingFile\), id\)/, '先取走')
+  assert.match(INDEX, /if \(!taken\.item\) return sendJson\(res, 404/, '取不到就明确说"可能已经发过"')
+  assert.match(INDEX, /const back = addDraft\(taken\.queue, item, \{\}\)/, '发失败要放回队列')
+  assert.match(INDEX, /recordShare\(\{ bvid: item\.bvid, rpid: item\.parent, text: item\.message \}\)/, '成功才记账')
+
+  // 设置页有入口
+  assert.match(CLIENT, /jget\('\/pending'\)/, '设置页要能读列表')
+  assert.match(CLIENT, /jpost\('\/pending\/approve'/, '要有批准按钮')
+  assert.match(CLIENT, /jpost\('\/pending\/drop'/, '要有否掉按钮')
+
+  // 提示词必须让她走这条道
+  const duty = readFileSync(new URL('../prompts/duty.md', import.meta.url), 'utf8')
+  assert.match(duty, /一律用 `bili_draft`/, '陌生人必须先写草稿')
+})
+
 test('设置页给了新东西的入口，宿主也有对应的接口（否则是"看得见点不动"）', () => {
   // 客户端：作息窗口 / 推送方式 / 发条测试
   assert.match(CLIENT, /scheduleWindows/, '要有作息窗口输入框')

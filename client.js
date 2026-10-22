@@ -255,6 +255,7 @@ function WatchTab() {
       const [notifyType, setNotifyType] = React.useState(null)    // 通知后端
       const [notifyUrl, setNotifyUrl] = React.useState(null)
       const [notifyCmd, setNotifyCmd] = React.useState(null)
+      const [pending, setPending] = React.useState(null)        // null = 还没读；[] = 读到了但队列是空的
       const [login, setLogin] = React.useState(null)
       const [runNote, setRunNote] = React.useState(null)
       const [report, setReport] = React.useState(null)        // 非 null = 报告已展开   // 顶部那行状态（跑一轮/装依赖的反馈原来在最底下，看不见）
@@ -518,8 +519,33 @@ function WatchTab() {
         } catch (e) { say(String(e?.message ?? e), 'warn') } finally { setBusy('') }
       }
 
-      const onNotifyTest = async () => {
-        setBusy('notify')
+      /* ── 待审草稿（2.1）：陌生人的回复先进这里，你点头才发 ── */
+      const loadPending = async () => {
+        try {
+          const r = await jget('/pending')
+          setPending(Array.isArray(r && r.items) ? r.items : [])
+        } catch { setPending([]) }
+      }
+      const onApprove = async (id) => {
+        setBusy('pending')
+        try {
+          const r = await jpost('/pending/approve', { id })
+          if (r && r.ok) say('已发出 ✓', 'good')
+          else say('没发出去：' + ((r && r.error) || '未知原因'), 'warn')
+        } catch (e) { say(String(e?.message ?? e), 'warn') }
+        finally { setBusy(''); loadPending() }
+      }
+      const onDrop = async (id) => {
+        setBusy('pending')
+        try {
+          const r = await jpost('/pending/drop', { id })
+          if (r && r.ok) say('已否掉（她下次会知道这种不要）', 'good')
+          else say('没删掉：' + ((r && r.error) || '未知原因'), 'warn')
+        } catch (e) { say(String(e?.message ?? e), 'warn') }
+        finally { setBusy(''); loadPending() }
+      }
+
+      const onNotifyTest = async () => {        setBusy('notify')
         try {
           const r = await jpost('/notify-test', {})
           if (r && r.ok) say(`通知发出去了（${r.backend}）` + (r.detail ? '：' + r.detail : ''), 'good')
@@ -740,6 +766,28 @@ function WatchTab() {
             on: sw('diaryPush'),
             onChange: (v) => patch({ diaryPush: v }, '日记摘要推送'),
           })),
+
+        /* ── 待审草稿（2.1）── */
+        h('div', { 'data-bd-sec': '', 'data-bd-group': 'social', 'data-bd-away': tab === 'social' ? undefined : '' },
+          h('div', { 'data-bd-h': '' }, '等她写、等你点头的回复'),
+          pending === null
+            ? h('div', { 'data-bd-row': '' },
+                h('button', { 'data-bd-btn': '', disabled: Boolean(busy), onClick: loadPending }, '读一下待审草稿'))
+            : pending.length === 0
+              ? h('div', { 'data-bd-note': '' }, '现在没有待审的草稿。陌生人回她的时候，她会先写在这，你点「批准」才发得出去；你自己的消息她直接回，不进这里。')
+              : h('div', null,
+                  ...pending.slice(0, 20).map((it) => h('div', { key: it.id, 'data-bd-item': '' },
+                    h('div', { 'data-bd-label': '' }, `${it.bvid || '（没记 BV）'} · ${new Date(it.at).toLocaleString('zh-CN')}`),
+                    h('div', { 'data-bd-note': '' }, it.note || '（她没写为什么该回这条）'),
+                    h('pre', { 'data-bd-pre': '' }, it.message),
+                    h('div', { 'data-bd-row': '' },
+                      h('button', { 'data-bd-btn': '', 'data-primary': '', disabled: Boolean(busy), onClick: () => onApprove(it.id) },
+                        busy === 'pending' ? '处理中…' : '批准并发出'),
+                      h('button', { 'data-bd-btn': '', disabled: Boolean(busy), onClick: () => onDrop(it.id) }, '否掉'))))),
+          pending && pending.length > 20 ? h('div', { 'data-bd-note': '' }, `还有 ${pending.length - 20} 条没显示（一共 ${pending.length} 条）—— 批准几个刷新一下`) : null,
+          pending && pending.length ? h('div', { 'data-bd-note': '' }, '⚠️ 草稿超过 72 小时会自动失效：三天前该回的话，第四天回不如不回。') : null,
+          pending && pending.length ? h('div', { 'data-bd-row': '' },
+            h('button', { 'data-bd-btn': '', disabled: Boolean(busy), onClick: loadPending }, '刷新')) : null),
 
         /* ── 关注什么 / 在哪儿刷 ── */
         h('div', { 'data-bd-sec': '', 'data-bd-group': 'taste', 'data-bd-away': tab === 'taste' ? undefined : '' },
