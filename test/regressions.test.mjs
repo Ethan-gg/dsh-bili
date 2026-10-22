@@ -201,7 +201,7 @@ test('定时那一跳先看跑成没跑成，再消费窗口（否则被拒一�
 test('生物钟接在 tick 上，且没配窗口时走老路（升级当天行为不变）', () => {
   assert.match(INDEX, /const schedule = clockSchedule\(\)/, 'tick 里要先算作息窗口')
   assert.match(INDEX, /if \(schedule\) \{ tickClock\(schedule, now\); return \}/, '配了就走生物钟，否则继续老谷时逻辑')
-  assert.match(INDEX, /return windows\.length \? \{ windows, minGapMin: 10, skipChance: 0\.3 \} : null/, '空窗口必须返回 null')
+  assert.match(INDEX, /return windows\.length \? \{ windows, minGapMin: 10, skipChance: Number\(cfg\.skipChance\) \|\| 0 \} : null/, '空窗口必须返回 null；概率用设置页那个值')
   // 定时器里抛异常会带走整个宿主（10-14 的事故），所以这一跳必须自己兜
   assert.match(INDEX, /const tickClock = \(schedule, now\) => \{\s*try \{/, 'tickClock 要自己 try')
   // 计划要先落盘再唤醒；"不看"也要记掉这次机会

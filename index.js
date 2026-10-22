@@ -91,6 +91,10 @@ export const Config = !z ? undefined : z.object({
    * 而这个值要同时在设置页 / `bili_config` 工具 / config.json 三处可改。
    */
   scheduleWindows: z.string().default('').extra('volatile', true),
+  /** 今晚不看的概率（0–0.95，默认 0.3） */
+  skipChance: z.number().default(0.3).extra('volatile', true),
+  /** 单次醒来最多看几条（默认 5） */
+  maxVideosPerWake: z.natural().default(5).extra('volatile', true),
   /** 通知后端：none / desktop / webhook / command / dm / stdout / file（2.1） */
   notifyType: z.string().default('none').extra('volatile', true),
   /** webhook 地址（飞书/钉钉/企微/QQ 机器人）——报文格式由宿主按域名自动适配 */
@@ -296,7 +300,7 @@ function reportMeta() {
    */
   const DEFAULTS = {
     dmWatch: true, dmWatchMinutes: 1, dmReplyPerDay: 0, dmOwnerUid: 0,
-    personaPrompt: '', scheduleWindows: '',
+    personaPrompt: '', scheduleWindows: '', skipChance: 0.3, maxVideosPerWake: 5,
     notifyType: 'none', notifyUrl: '', notifyCmd: '', diaryPush: true, runMode: 'auto',
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     dmMode: 'only', dmUid: 0,
@@ -345,6 +349,8 @@ function reportMeta() {
     if ('favFolderId' in p) p.favFolderId = Math.max(0, Math.floor(Number(p.favFolderId) || 0))
     if ('commentPerRound' in p) p.commentPerRound = Math.max(0, Math.min(Number(p.commentPerRound) || 0, 20))
     if ('capability' in p) p.capability = ['node', 'python'].includes(String(p.capability)) ? String(p.capability) : 'node'
+    if ('skipChance' in p) p.skipChance = Math.max(0, Math.min(Number(p.skipChance) || 0, 0.95))
+    if ('maxVideosPerWake' in p) p.maxVideosPerWake = Math.max(1, Math.min(Number(p.maxVideosPerWake) || 5, 20))
     if ('syncTransport' in p) p.syncTransport = ['file', 'dshim', 'http'].includes(String(p.syncTransport)) ? String(p.syncTransport) : 'file'
     if ('syncConversations' in p) p.syncConversations = String(p.syncConversations ?? '').slice(0, 2000)
     if ('syncEndpoint' in p) p.syncEndpoint = String(p.syncEndpoint ?? '').trim().slice(0, 2048)
@@ -1591,6 +1597,7 @@ function reportMeta() {
         ? `今天已经挑过 ${already} 条了 ⇒ **这一轮最多再挑 ${left} 条**（「每天最多 ${quota} 条」是全天总量，不是每轮）；`
         : `今天最多挑 ${quota} 条；`)
       + `关键词${kws.length ? `用这些：${kws.join('、')}` : '用章程里的默认那几组'}。`
+      + `单次醒来先快速过 ${Number(cfg.maxVideosPerWake) || 5} 条候选（初筛看标题/播放/评论），再挑值得的深读。`
       + `本地转写：${cfg.transcribe
         ? (asrReadyNow()
           ? '开着，而且装好了（没字幕的视频用家里那份 asr.py 转，命令见章程）'
@@ -1983,7 +1990,7 @@ function reportMeta() {
       clockSchedule.warned = true
       log(`作息窗口有 ${bad.length} 段看不懂，已忽略：${bad.join(' / ')}`)
     }
-    return windows.length ? { windows, minGapMin: 10, skipChance: 0.3 } : null
+    return windows.length ? { windows, minGapMin: 10, skipChance: Number(cfg.skipChance) || 0 } : null
   }
   /**
    * 生物钟这一跳。**所有异常都吞掉** —— 它跑在定时器里，抛出去会带走整个宿主（10-14 那次事故）。

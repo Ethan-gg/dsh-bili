@@ -135,6 +135,16 @@ window.__ModuleLoader__.load({
       night: { label: '晚上/夜间谷时', start: '18:00', end: '09:00' },
     }
 
+    /** 作息窗口：文本 `20:00-24:00:1, 12:00-14:00:2` ⇄ 结构化行（设置页展示/编辑用） */
+    const parseSchedRows = (text) => String(text || '').split(',').map((s) => s.trim()).filter(Boolean).map((seg) => {
+      const m = /^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})(?::(\d+))?$/.exec(seg)
+      return m ? { start: m[1], end: m[2], wakes: Math.min(12, Math.max(0, Number(m[3]) || 1)) } : null
+    }).filter(Boolean)
+    const formatSchedRows = (rows) => (Array.isArray(rows) ? rows : [])
+      .filter((r) => r && /^\d{1,2}:\d{2}$/.test(String(r.start)) && /^\d{1,2}:\d{2}$/.test(String(r.end)))
+      .map((r) => `${r.start}-${r.end}:${Math.max(0, Math.min(12, Number(r.wakes) || 0))}`)
+      .join(', ')
+
     /* ────────────── 小组件 ────────────── */
 
     function Switch({ on, onChange, disabled }) {
@@ -260,7 +270,9 @@ function WatchTab() {
       const [dmWatch, setDmWatch] = React.useState(null)          // 私信双向开关
       const [dmMode, setDmMode] = React.useState(null)      // 投递方式：off / only / both
       const [mention, setMention] = React.useState(null)
-      const [schedWin, setSchedWin] = React.useState(null)        // 作息窗口（本地草稿）
+      const [schedRows, setSchedRows] = React.useState(null)        // 作息窗口（[{start,end,wakes}]，本地草稿）
+      const [skipChance, setSkipChance] = React.useState(null)      // 今晚不看的概率
+      const [maxVideos, setMaxVideos] = React.useState(null)        // 单次醒来最多看几条
       const [notifyType, setNotifyType] = React.useState(null)    // 通知后端
       const [notifyUrl, setNotifyUrl] = React.useState(null)
       const [notifyCmd, setNotifyCmd] = React.useState(null)
@@ -308,7 +320,9 @@ function WatchTab() {
         if (cfg && dmMode === null) setDmMode(cfg.dmMode || 'only')
         if (cfg && dmWatch === null) setDmWatch(cfg.dmWatch !== false)   // 2.0 起默认开
         if (cfg && favId === null) setFavId(String(cfg.favFolderId ?? 0))
-        if (cfg && schedWin === null) setSchedWin(cfg.scheduleWindows || '')
+        if (cfg && schedRows === null) setSchedRows(parseSchedRows(cfg.scheduleWindows || ''))
+        if (cfg && skipChance === null) setSkipChance(cfg.skipChance ?? 0.3)
+        if (cfg && maxVideos === null) setMaxVideos(cfg.maxVideosPerWake ?? 5)
         if (cfg && notifyType === null) setNotifyType(cfg.notifyType || 'none')
         if (cfg && notifyUrl === null) setNotifyUrl(cfg.notifyUrl || '')
         if (cfg && notifyCmd === null) setNotifyCmd(cfg.notifyCmd || '')
@@ -656,15 +670,76 @@ function WatchTab() {
         /* ── 作息（2.1 生物钟）── */
         h('div', { 'data-bd-sec': '', 'data-bd-group': 'daily', 'data-bd-away': tab === 'daily' ? undefined : '' },
           h('div', { 'data-bd-h': '' }, '作息：她自己什么时候醒'),
-          h('div', { 'data-bd-label': '' }, '醒来时段'),
-          h('input', {
-            'data-bd-input': '', value: schedWin ?? '',
-            placeholder: '例如 20:00-24:00:1, 12:00-14:00:2',
-            onChange: (e) => setSchedWin(e.target.value),
-            onBlur: () => patch({ scheduleWindows: String(schedWin || '').trim() }, '作息窗口'),
-          }),
-          h('div', { 'data-bd-note': '' }, '格式：开始-结束[:次数]，多个用逗号隔开。留空 = 用上面的峰谷时段（老逻辑）。'),
-          h('div', { 'data-bd-note': '' }, '配了之后：在时段里随机一个时刻醒（不是整点），并且有 30% 的概率「今天不看」。')),
+          (schedRows || []).length
+            ? (schedRows || []).map((row, i) => h('div', { key: i, 'data-bd-row': '' },
+              h('input', {
+                'data-bd-input': '', value: row.start, placeholder: '20:00', style: { width: '76px' },
+                onChange: (e) => setSchedRows((rows) => (rows || []).map((r, j) => (j === i ? { ...r, start: e.target.value } : r))),
+                onBlur: () => patch({ scheduleWindows: formatSchedRows(schedRows) }, '作息窗口'),
+              }),
+              h('span', {}, '—'),
+              h('input', {
+                'data-bd-input': '', value: row.end, placeholder: '24:00', style: { width: '76px' },
+                onChange: (e) => setSchedRows((rows) => (rows || []).map((r, j) => (j === i ? { ...r, end: e.target.value } : r))),
+                onBlur: () => patch({ scheduleWindows: formatSchedRows(schedRows) }, '作息窗口'),
+              }),
+              h('span', {}, '醒来'),
+              h('input', {
+                'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 0, max: 12, value: row.wakes,
+                onChange: (e) => setSchedRows((rows) => (rows || []).map((r, j) => (j === i ? { ...r, wakes: e.target.value } : r))),
+                onBlur: () => {
+                  const next = (schedRows || []).map((r, j) => (j === i ? { ...r, wakes: Math.max(0, Math.min(12, Number(r.wakes) || 0)) } : r))
+                  setSchedRows(next)
+                  patch({ scheduleWindows: formatSchedRows(next) }, '作息窗口')
+                },
+              }),
+              h('span', {}, '次'),
+              h('button', {
+                'data-bd-btn': '',
+                onClick: () => {
+                  const next = (schedRows || []).filter((_, j) => j !== i)
+                  setSchedRows(next)
+                  patch({ scheduleWindows: formatSchedRows(next) }, '作息窗口')
+                },
+              }, '×'),
+            ))
+            : h('div', { 'data-bd-note': '' }, '还没有窗口 ⇒ 用上面的峰谷时段（老逻辑）'),
+          h('div', { 'data-bd-row': '' },
+            h('button', {
+              'data-bd-btn': '',
+              onClick: () => {
+                const next = [...(schedRows || []), { start: '20:00', end: '24:00', wakes: 1 }]
+                setSchedRows(next)
+                patch({ scheduleWindows: formatSchedRows(next) }, '作息窗口')
+              },
+            }, '+ 添加窗口')),
+          h('div', { 'data-bd-note': '' }, '有窗口时：在窗口里随机一个时刻醒（不是整点）；同一窗口两次醒来至少隔 10 分钟。留空 = 用上面的峰谷时段。'),
+          h('div', { 'data-bd-row': '' },
+            h('div', { 'data-bd-grow': '' },
+              h('div', { 'data-bd-label': '' }, '今晚不看的概率'),
+              h('div', { 'data-bd-note': '' }, '0.3 = 三成；这个概率也由生物钟掷骰子')),
+            h('input', {
+              'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 0, max: 0.95, step: 0.05, value: skipChance ?? 0.3,
+              onChange: (e) => setSkipChance(e.target.value),
+              onBlur: () => {
+                const v = Math.max(0, Math.min(0.95, Number(skipChance) || 0))
+                setSkipChance(v)
+                patch({ skipChance: v }, '今晚不看的概率')
+              },
+            })),
+          h('div', { 'data-bd-row': '' },
+            h('div', { 'data-bd-grow': '' },
+              h('div', { 'data-bd-label': '' }, '单次醒来观看视频数量'),
+              h('div', { 'data-bd-note': '' }, '初筛的候选数；筛完再挑 2–3 条深读')),
+            h('input', {
+              'data-bd-input': '', 'data-bd-num': '', type: 'number', min: 1, max: 20, value: maxVideos ?? 5,
+              onChange: (e) => setMaxVideos(e.target.value),
+              onBlur: () => {
+                const v = Math.max(1, Math.min(20, Number(maxVideos) || 5))
+                setMaxVideos(v)
+                patch({ maxVideosPerWake: v }, '单次醒来观看视频数量')
+              },
+            }))),
 
         /* ── 一轮挑几条 ── */
         h('div', { 'data-bd-sec': '', 'data-bd-group': 'daily', 'data-bd-away': tab === 'daily' ? undefined : '' },

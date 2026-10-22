@@ -251,3 +251,20 @@ test('_set 能随配置一起落盘、读回（面板"本地优先"的账本）'
   const c = clamp({ _set: ['perDay', 'mentionName'] })
   assert.deepEqual(c._set, ['perDay', 'mentionName'])
 })
+
+test('作息扁平视图：窗口文本 / 今晚不看的概率 / 单次醒来观看数量 都能往返（2.1 设置页）', () => {
+  const cfg = applyFlat(DEFAULTS, { scheduleWindows: '10:00-12:00:2, 20:00-24:00:1', skipChance: 0.4, maxVideosPerWake: 3 })
+  assert.deepEqual(cfg.schedule.windows, [
+    { start: '10:00', end: '12:00', wakes: 2 },
+    { start: '20:00', end: '24:00', wakes: 1 },
+  ])
+  assert.equal(cfg.schedule.skipChance, 0.4)
+  assert.equal(cfg.feed.maxVideosPerWake, 3)
+  const flat = flatView(cfg)
+  assert.equal(flat.scheduleWindows, '10:00-12:00:2, 20:00-24:00:1')
+  assert.equal(flat.skipChance, 0.4)
+  assert.equal(flat.maxVideosPerWake, 3)
+  // 越界值被 clamp 住（概率 ≤0.95、视频数 1–20）
+  assert.equal(applyFlat(DEFAULTS, { skipChance: 2 }).schedule.skipChance, 0.95)
+  assert.equal(applyFlat(DEFAULTS, { maxVideosPerWake: 0 }).feed.maxVideosPerWake, 1)
+})
