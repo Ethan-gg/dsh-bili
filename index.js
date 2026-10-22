@@ -1375,7 +1375,7 @@ function reportMeta() {
   const runUpgrade = () => {
     if (upgrading) return { ok: true, busy: true, log: installLogFile, hint: '正在升级，别重复点' }
     upgrading = true
-    const spec = lastUpdateSource === 'github' ? 'github:c1overzz/dsh-bili-scroll' : 'dsh-bili-scroll'
+    const spec = lastUpdateSource === 'github' ? 'github:Ethan-gg/dsh-bili-scroll' : 'dsh-bili-scroll'
     appendInstall('\n=== ' + new Date().toISOString() + ' 开始升级（add ' + spec + '）===\n')
     ;(async () => {
       try {
@@ -3062,7 +3062,7 @@ function reportMeta() {
       try {
         if (fresh(ghUpdateCache)) ghVer = ghUpdateCache.latest
         else {
-          const r = await fetch('https://api.github.com/repos/c1overzz/dsh-bili-scroll/contents/package.json', {
+          const r = await fetch('https://api.github.com/repos/Ethan-gg/dsh-bili-scroll/contents/package.json', {
             signal: AbortSignal.timeout(6000),
             headers: { 'user-agent': 'dsh-bili-scroll', accept: 'application/vnd.github+json' },
           })
@@ -3077,7 +3077,7 @@ function reportMeta() {
       // 谁新用谁；一样新时优先 npm（装起来快）
       if (ghVer && (!npmVer || cmp(ghVer, npmVer) > 0)) { out.latest = ghVer; out.source = 'github' }
       else out.latest = npmVer || ghVer
-      if (out.source === 'github') out.page = 'https://github.com/c1overzz/dsh-bili-scroll'
+      if (out.source === 'github') out.page = 'https://github.com/Ethan-gg/dsh-bili-scroll'
       out.hasNew = Boolean(out.latest) && cmp(out.latest, out.current) > 0
       lastUpdateSource = out.source
       if (!out.latest) { out.ok = false; out.error = '两条源都没查到版本号（网络可能不通）' }

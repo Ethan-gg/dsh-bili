@@ -57,7 +57,7 @@
 
 ```bash
 # ⭐ 推荐这条（npm 那边账号被暂停，最新版一直在这里）
-dsh plugin --profile web add github:c1overzz/dsh-bili-scroll
+dsh plugin --profile web add github:Ethan-gg/dsh-bili-scroll
 
 # npm 恢复之后可以改回这条（更快、不用加速器）
 dsh plugin --profile web add dsh-bili-scroll
@@ -139,7 +139,7 @@ dsh plugin --profile web add dsh-bili-scroll
 
 1. **先确认前提**：机器上有 `Python 3.10+` 或 `uv` 吗？（查 `python --version` / `uv --version`）
    两个都没有 ⇒ **建议装 `uv`**（单文件 exe、免管理员、能自带 Python）；
-2. **装插件**：`dsh plugin --profile web add github:c1overzz/dsh-bili-scroll`
+2. **装插件**：`dsh plugin --profile web add github:Ethan-gg/dsh-bili-scroll`
    （npm 上的 `dsh-bili-scroll` 同名同内容，审核通过后用 `add dsh-bili-scroll` 更省事）
 3. ⚠️ **必须提醒用户重启一次 dsh** —— bundle 层要重启才组装，不重启插件不会生效；
 4. 重启后请用户进 **设置 → B站鱼娘**：先点「**装依赖**」（几十秒，进度就显示在页面下面）、再点「**扫码登录**」
@@ -171,7 +171,7 @@ MIT（内置的 `vendor/bilibili-mcp/` 另见该目录下的 LICENSE）
 
 - **遇到问题先去群里问一句** —— 安装、报错、设置这些，群里大多有人踩过；比自己从头试快得多。
   - **QQ 交流群：1128547307**
-- **确实像 bug 的**（能复现、有报错原文），欢迎开 [Issue](https://github.com/c1overzz/dsh-bili-scroll/issues/new)：
+- **确实像 bug 的**（能复现、有报错原文），欢迎开 [Issue](https://github.com/Ethan-gg/dsh-bili-scroll/issues/new)：
   请带上 **dsh 版本 / 插件版本（设置页顶部徽章）/ 系统（web 还是桌面版）/ 报错原文或 `duty.log` 最后几十行**。
   有这个我基本一轮就能定位；只说"装不上"，通常要来回问三四次。
 - **想改进它**：欢迎 PR。⚠️ 但请**一件事一个 PR**（不要一个 PR 塞五个功能），
