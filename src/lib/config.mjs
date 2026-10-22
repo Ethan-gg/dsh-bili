@@ -124,6 +124,12 @@ export const DEFAULTS = {
 
   /** 运行：怎么起一轮、用哪个 dsh */
   run: {
+    /**
+     * auto = 先常驻会话、叫不醒就退回 spawn（默认）
+     * session = 只用常驻会话（她跑在插件自己的会话里 ⇒ 宿主工具全能看见，但要有 sessionController）
+     * spawn = 只用老的一次性进程（能力少，但哪都能跑）
+     */
+    mode: 'auto',
     headlessProfile: 'headless',
     dshBin: '',
     dshPath: '',
@@ -314,6 +320,7 @@ export function clamp(cfg = {}) {
   c.persona.selfClaim = String(c.persona.selfClaim ?? '').trim().slice(0, 64)
   c.persona.prompt = String(c.persona.prompt ?? '').slice(0, 20000)
 
+  c.run.mode = oneOf(c.run.mode, ['auto', 'session', 'spawn'], 'auto')
   c.run.headlessProfile = String(c.run.headlessProfile ?? 'headless').trim().slice(0, 64) || 'headless'
   c.run.dshBin = String(c.run.dshBin ?? '').trim().slice(0, 1024)
   c.run.dshPath = String(c.run.dshPath ?? '').trim().slice(0, 1024)
@@ -409,6 +416,8 @@ export function flatView(cfg) {
     notifyCmd: c.notify.cmd,
     /** 日记摘要推送 */
     diaryPush: c.diary.push,
+    /** 一轮怎么起：auto / session / spawn */
+    runMode: c.run.mode,
   }
 }
 
@@ -452,6 +461,7 @@ export function applyFlat(cfg, patch = {}) {
   if (has('notifyUrl')) c.notify.url = patch.notifyUrl
   if (has('notifyCmd')) c.notify.cmd = patch.notifyCmd
   if (has('diaryPush')) c.diary.push = patch.diaryPush
+  if (has('runMode')) c.run.mode = patch.runMode
   return clamp(c)
 }
 
@@ -566,3 +576,4 @@ export function fromLegacy(scrollCfg = {}, whaleCfg = {}, whaleNightCfg = {}) {
 
   return { config: clamp(out), mapped, conflicts, dropped }
 }
+

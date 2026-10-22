@@ -41,6 +41,7 @@ import { completePlan, makePlan } from './src/host/clock.mjs'
 import { sendNotify, TEST_MESSAGE } from './src/host/notify.mjs'
 import { addDraft, dropDraft, listDrafts, readQueue, takeDraft, writeQueue } from './src/host/review.mjs'
 import { appendDiary, todayDigest } from './src/host/diary.mjs'
+import { createWatchdog, deliverToSession, hasSession } from './src/host/wake.mjs'
 
 export const name = 'bili-scroll'
 export const inject = ['webServer', 'tools', 'settings']
@@ -92,6 +93,8 @@ export const Config = !z ? undefined : z.object({
   notifyCmd: z.string().default('').extra('volatile', true),
   /** 每天把日记摘要也推给你 */
   diaryPush: z.boolean().default(true).extra('volatile', true),
+  /** 一轮怎么起：auto（先常驻会话，叫不醒退回 spawn）/ session / spawn */
+  runMode: z.string().default('auto').extra('volatile', true),
   /** 关注关键词（空了用章程里默认那几组） */
   keywords: z.array(z.string()).default([]).extra('volatile', true),
   /** Python：指向 venv 里的那个最好 */
@@ -265,7 +268,7 @@ function reportMeta() {
   const DEFAULTS = {
     dmWatch: true, dmWatchMinutes: 1, dmReplyPerDay: 0, dmOwnerUid: 0,
     personaPrompt: '', scheduleWindows: '',
-    notifyType: 'none', notifyUrl: '', notifyCmd: '', diaryPush: true,
+    notifyType: 'none', notifyUrl: '', notifyCmd: '', diaryPush: true, runMode: 'auto',
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     dmMode: 'only', dmUid: 0,
     keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '', reportLevel: 'full', replyToComments: false, replyPerRound: 1, favFolderId: 0,
@@ -784,6 +787,24 @@ function reportMeta() {
         ok: true, queued: true, id: r.id, dup: Boolean(r.dup),
         message: r.dup ? '这条已经在待审队列里了（不会重复入队）' : '已写进待审队列 —— 本人批准后才会发出去',
       }
+    },
+  })
+
+  tool({
+    name: 'bili_done',
+    description: '**这一轮干完了就调它，一次**。常驻会话模式下靠它收尾：放锁、数今天挑了几条、发推送、稍后复核。\n'
+      + '（spawn 模式下进程退出会自动收尾，不需要你调；调了也没事，会说"没有在跑的轮次"。）',
+    parameters: {
+      picked: { type: 'number', description: '这一轮挑中几条（可省略，宿主会从报告里自己数）' },
+      note: { type: 'string', description: '一句话收尾（可省略）' },
+    },
+    async execute(args) {
+      if (!dutyBusy) return { ok: true, note: '现在没有在跑的轮次，什么也没做' }
+      const why = dutyBusy
+      try { finishRound(why, { code: 0, via: 'session' }) } catch (e) {
+        return { ok: false, error: '收尾时出错：' + String(e?.message ?? e) }
+      }
+      return { ok: true, message: '收工了' + (args?.note ? '：' + String(args.note).slice(0, 120) : '') }
     },
   })
 
@@ -1417,8 +1438,44 @@ function reportMeta() {
    * 「这一轮在不在跑」的锁：值是**为什么在跑**（`window:noon` / `manual`），空闲为 null。
    * 只覆盖 `runDuty`（完整一轮）；私信回复那条是短任务、由 `dmBusy` + 跨进程 pid 锁管，不占这把。
    */
+  /**
+   * 一轮结束后的**统一收尾**。spawn 与常驻会话两条路都走这里 —— 不共用的话，
+   * "数条数 / 推送 / 复核"迟早只在其中一条路上生效，而另一条看起来"什么都没发生"。
+   */
+  const finishRound = (why, { code = 0, via = 'spawn' } = {}) => {
+    dutyBusy = null                                   // ⭐ 先放锁：后面的收尾再慢，也不该挡住下一轮
+    try { if (stopWatchdog) stopWatchdog() } catch { /* 已经在收尾了 */ }
+    stopWatchdog = null
+    try { log(`刷B站结束（${why} · ${via}，code=${code}）`) } catch { /* 日志写不进去也不能抛 */ }
+    try { stubReportIfMissing(code) } catch { /* 补不上也不影响后面 */ }
+    // ⭐ 2026-10-20：这一轮跑成了、并且使用者选了收藏夹 ⇒ 把挑中的存进去（后台做，别拖住收尾）
+    if (code === 0 && Number(cfg.favFolderId) > 0) {
+      try { favToday('auto').catch((error) => log('自动收藏出错（已兜住）：' + String(error?.message ?? error))) } catch { /* 忽略 */ }
+    }
+    // ⭐ 收尾推送：配了推送方式才发（默认 none ⇒ 什么都不做）；失败不影响这一轮
+    if (code === 0) { try { notifyRound().catch((e) => log('推送异常（已兜住）：' + String(e?.message ?? e))) } catch { /* 忽略 */ } }
+    try { rotateLogIfBig() } catch { /* 忽略 */ }
+    // ⭐ 这一轮挑了几条：从今天的报告里数（上一轮挑的还在同一份文件里 ⇒ 数出来就是全天的账）
+    try {
+      const st = readJson(dutyStateFile, {})
+      const prev = st.day === dayKey() ? Number(st.picked || 0) : 0
+      const picked = countPickedToday()   // 报告是事实来源、state 只是兜底（跟闸门同一个算法）
+      if (picked > prev) { bumpState({ picked }); log(`今天挑到 ${picked} 条（上限 ${Number(cfg.perDay) || 0} 条）`) }
+    } catch (e) { try { log(`数挑了几条时出错（不影响这一轮）：${e?.message ?? e}`) } catch { /* 忽略 */ } }
+    // ⭐ 发完评论之后**过一会儿再核一次**：接口回"发送成功"≠ 公开可见（新号/风控会进审核）
+    try {
+      const verifyTimer = setTimeout(() => { Promise.resolve(runVerify('round')).catch((e) => log('复核异常：' + (e?.message ?? e))) }, 90_000)
+      verifyTimer.unref?.()   // 别为了一次复核把宿主进程的退出拖住 90 秒
+    } catch { /* 忽略 */ }
+  }
+
   let dutyBusy = null
-  const runDuty = (why = 'window') => {
+  /** 常驻会话这一轮的看门狗（她卡住时兜底放锁） */
+  let stopWatchdog = null
+  /** 一轮最多跑多久就认为"她卡住了"。常驻会话没有进程退出信号，只能靠这个兜底 */
+  const ROUND_TIMEOUT_MS = 25 * 60_000
+
+  const runDuty = (why = 'window', opts = {}) => {
    try {
     // ⭐ 2.1 修：**一轮在跑的时候不许再起一轮**。
     //    以前没有这道闸：手动点「现在跑一轮」正好撞上定时那一轮 ⇒ 两个 headless 同时跑，
@@ -1429,6 +1486,34 @@ function reportMeta() {
       return { started: false, why, busy: true, error: `上一轮还没结束（${dutyBusy}）` }
     }
     refreshCfg()          // ⭐ 设置页刚改过的值要立刻生效（config 是就地改的，快照会过期）
+    // ⭐ M3：优先常驻会话 —— 她跑在**插件自己的会话**里，宿主工具（日记 / 待审草稿 / 闸门）全都看得见。
+    //    没有这个服务（headless / 精简 profile）、或者叫不醒，就退回 spawn：
+    //    能力少一点，但这一轮不会白丢。**这也是为什么 sessionController 不能写进 inject**（见文件上方）。
+    const wantSession = !opts.forceSpawn && String(cfg.runMode || 'auto') !== 'spawn'
+    if (wantSession && hasSession(sessionController())) {
+      const cwd = stateDir
+      const text = promptFor()
+      log(`刷B站开跑（${why}）：常驻会话 mode=queue  cwd=${cwd}`)
+      dutyBusy = why
+      stopWatchdog = createWatchdog({
+        ms: ROUND_TIMEOUT_MS,
+        onTimeout: () => {
+          log(`常驻会话这一轮超过 ${Math.round(ROUND_TIMEOUT_MS / 60000)} 分钟没收尾（她可能卡住了）—— 强制收尾，下一轮照常`)
+          try { finishRound(why, { code: 0, via: 'session-timeout' }) } catch { /* 兜底自己出错也不能抛 */ }
+        },
+      })
+      const fallback = (whyNot) => {
+        log(`常驻会话没叫醒（${whyNot}），退回 spawn 跑这一轮`)
+        try { if (stopWatchdog) stopWatchdog() } catch { /* 忽略 */ }
+        stopWatchdog = null
+        dutyBusy = null
+        try { runDuty(why, { forceSpawn: true }) } catch (e2) { log('退回 spawn 也失败：' + (e2?.message ?? e2)) }
+      }
+      Promise.resolve(deliverToSession({ sessionController: sessionController(), cwd, text }))
+        .then((r) => { if (!r.ok) fallback(r.error) })
+        .catch((e) => fallback(String(e?.message ?? e)))
+      return { started: true, why, mode: 'session', cwd, log: logFile }
+    }
     const dsh = resolveDsh()
     // ⭐ 找不到 dsh 就别硬跑：以前会退化成裸 `dsh` ⇒ spawn 失败、只留 exit 1 + 一串乱码 ✗
     if (dsh.missing) {
@@ -1481,29 +1566,8 @@ function reportMeta() {
     child.stdout?.on('data', pick)
     child.stderr?.on('data', pick)
     child.on('exit', (code) => {
-      dutyBusy = null                                   // ⭐ 先放锁：后面的收尾再慢，也不该挡住下一轮
       try { if (overlay) rmSync(overlay, { force: true }) } catch { /* 删不掉就留给启动时清扫 */ }
-      log(`刷B站结束（${why}，code=${code}）`)
-      stubReportIfMissing(code)   // ⭐ 没写报告就补一份占位 —— 别让使用者什么都看不到
-    // ⭐ 2026-10-20：这一轮跑成了、并且使用者选了收藏夹 ⇒ 把挑中的存进去（后台做，别拖住收尾）
-    if (code === 0 && Number(cfg.favFolderId) > 0) {
-      favToday('auto').catch((error) => log('自动收藏出错（已兜住）：' + String(error?.message ?? error)))
-    }
-      // ⭐ 收尾推送：配了推送方式才发（默认 none ⇒ 什么都不做）；失败不影响这一轮
-      if (code === 0) notifyRound().catch((e) => log('推送异常（已兜住）：' + String(e?.message ?? e)))
-      rotateLogIfBig()            // ⭐ 日志别无声地长（三天 797KB ⇒ 一年约 100MB）
-      // ⭐ 这一轮挑了几条：从今天的报告里数（上一轮挑的还在同一份文件里 ⇒ 数出来就是全天的账）
-      try {
-        const st = readJson(dutyStateFile, {})
-        const prev = st.day === dayKey() ? Number(st.picked || 0) : 0
-        const picked = countPickedToday()   // 报告是事实来源、state 只是兜底（跟闸门同一个算法）
-        if (picked > prev) { bumpState({ picked }); log(`今天挑到 ${picked} 条（上限 ${Number(cfg.perDay) || 0} 条）`) }
-      } catch (e) { log(`数挑了几条时出错（不影响这一轮）：${e?.message ?? e}`) }
-      // ⭐ 发完评论之后**过一会儿再核一次**（2026-10-16 加的「评论发出后复核」）：
-      //    接口回"发送成功"≠ 公开可见（新号/风控会进审核）；而"不公开"时连 @ 通知都不会推 ⇒
-      //    插件会以为发了、下一轮不再发 ⇒ 一条都没到人。等 90 秒再查，避免把"还在审核"误判成"没发出去"。
-      const verifyTimer = setTimeout(() => { Promise.resolve(runVerify('round')).catch((e) => log('复核异常：' + (e?.message ?? e))) }, 90_000)
-      verifyTimer.unref?.()   // 别为了一次复核把宿主进程的退出拖住 90 秒
+      finishRound(why, { code, via: 'spawn' })
     })
     child.on('error', (e) => {
       dutyBusy = null                                   // spawn 失败也要放锁，否则永远卡在"在跑"
