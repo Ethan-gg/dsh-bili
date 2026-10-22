@@ -241,6 +241,7 @@ function WatchTab() {
       const [favId, setFavId] = React.useState(null)             // 选中的收藏夹 fid（字符串）
       const [persona, setPersona] = React.useState(null)   // 人设提示词草稿
       const [rl, setRl] = React.useState(null)
+      const [cap, setCap] = React.useState(null)           // 能力层：node（内置只读）/ python（MCP）
       const [newVer, setNewVer] = React.useState('')       // 发现的新版本号（空 = 没发现）          // 日报形态：full / brief / off
       // ⚠️ 输入框必须绑"本地草稿"：页面每 5 秒轮询 /status，服务端那份会把 config 盖掉
       //    ⇒ 直接绑 cfg 的话，用户打字打到一半就被冲没了 ✗（2026-10-14 陌生人验收时抓到）
@@ -284,6 +285,7 @@ function WatchTab() {
         if (cfg && kws === null) setKws((cfg.keywords || []).join('\n'))
         if (cfg && persona === null) setPersona(cfg.personaPrompt || '')
         if (cfg && rl === null) setRl(cfg.reportLevel || 'full')
+        if (cfg && cap === null) setCap(cfg.capability || 'node')
         if (cfg && perDay === null) setPerDay(String(cfg.perDay ?? 5))
         if (cfg && perRound === null) setPerRound(String(cfg.commentPerRound ?? 1))
         if (cfg && replyPer === null) setReplyPer(String(cfg.replyPerRound ?? 1))
@@ -479,7 +481,7 @@ function WatchTab() {
           const r = await jpost('/login/start', {})
           if (!r?.ok) { setLoginTone('warn'); setLoginState(r?.error || '出码失败'); return }
           setLogin({ key: r.key, qr: r.qr })
-          if (!r.qr) { setLoginTone('warn'); setLoginState('没画出二维码 —— 先点上面的「重装依赖」（venv 里要有 qrcode）') }
+          if (!r.qr) { setLoginTone('warn'); setLoginState('没画出二维码（Node 和 Python 都没成）—— 把「复制诊断信息」发给作者') }
           else setLoginState('用手机 B站 扫这张码')
           if (loginTimer.current) { clearInterval(loginTimer.current); loginTimer.current = null }   // 重复点：先把上一轮停掉
           let n = 0
@@ -863,6 +865,19 @@ function WatchTab() {
             h('div', { 'data-bd-note': '' }, `${watchedOffset + 1}–${Math.min(watchedOffset + WATCH_PAGE, watchedTotal)} / ${watchedTotal}`),
             h('button', { 'data-bd-btn': '', disabled: watchedOffset + WATCH_PAGE >= watchedTotal, onClick: () => onWatchPage(WATCH_PAGE) }, '下一页')) : null),
 
+        h('div', { 'data-bd-sec': '', 'data-bd-group': 'adv', 'data-bd-away': tab === 'adv' ? undefined : '' },
+          h('div', { 'data-bd-h': '' }, '搜索 / 字幕 / 评论走哪边'),
+          h('div', { 'data-bd-row': '' },
+            h('select', {
+              'data-bd-input': '', value: cap ?? 'node',
+              onChange: (e) => { setCap(e.target.value); patch({ capability: e.target.value }, '能力层') },
+            },
+              h('option', { value: 'node' }, 'Node 内置（推荐 —— 不依赖 Python，失败自动退回）'),
+              h('option', { value: 'python' }, 'Python MCP（老路）'))),
+          h('div', { 'data-bd-note': '' },
+            cap === 'python'
+              ? '只读三件走 Python MCP —— 需要「主依赖」装好。'
+              : '只读三件（搜索 / 字幕 / 评论）用插件内置的 Node 实现 —— 干净机器不装 Python 也能跑；出错会自动退回 Python MCP。写入类（发评论 / 私信）仍然走 Python。')),
         h('div', { 'data-bd-sec': '', 'data-bd-group': 'adv', 'data-bd-away': tab === 'adv' ? undefined : '' },
           h('div', { 'data-bd-row': '' },
             h('button', { 'data-bd-btn': '', disabled: busy === 'diag', onClick: onDiagnose }, '复制诊断信息'),

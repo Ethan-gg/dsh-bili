@@ -40,7 +40,10 @@ import { evaluateShare, readLedger, recordShare as gateRecord, writeLedger } fro
 import { completePlan, makePlan } from './src/host/clock.mjs'
 import { sendNotify, TEST_MESSAGE } from './src/host/notify.mjs'
 import { addDraft, dropDraft, listDrafts, readQueue, takeDraft, writeQueue } from './src/host/review.mjs'
-import { appendDiary, todayDigest } from './src/host/diary.mjs'
+import { appendDiary, todayDigest, lastEntryAny } from './src/host/diary.mjs'
+import { buildStatusCard } from './src/host/card.mjs'
+import { createNodeBili } from './src/bili/index.mjs'
+import { renderQrDataUri, renderQrPng as renderQrPngNode } from './src/bili/qr.mjs'
 import { createWatchdog, deliverToSession, hasSession } from './src/host/wake.mjs'
 
 export const name = 'bili-scroll'
@@ -95,6 +98,8 @@ export const Config = !z ? undefined : z.object({
   diaryPush: z.boolean().default(true).extra('volatile', true),
   /** 一轮怎么起：auto（先常驻会话，叫不醒退回 spawn）/ session / spawn */
   runMode: z.string().default('auto').extra('volatile', true),
+  /** ⭐ M2 能力层：node = 内置只读实现（失败自动退回 Python MCP）/ python = 只用 Python MCP */
+  capability: z.string().default('node').extra('volatile', true),
   /** 关注关键词（空了用章程里默认那几组） */
   keywords: z.array(z.string()).default([]).extra('volatile', true),
   /** Python：指向 venv 里的那个最好 */
@@ -149,7 +154,13 @@ export function apply(ctx, config) {
     try { myVer = String(JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8')).version || '') } catch { myVer = '' }
     return myVer
   }
-  const stateDir = stateDirOf(ctx, (m) => { try { console.log('[bili-scroll] ' + m) } catch { /* 没控制台就算了 */ } })
+  // 家目录准备（含一次性搬迁）发生在 logger 建好之前 —— 那几条日志先攒着，建好 duty.log 再补写进去。
+  // （2026-10-22：用户按文档去 duty.log 找「搬进来：config.json」，结果那里只有历史内容 ✗）
+  const bootLogs = []
+  const stateDir = stateDirOf(ctx, (m) => {
+    bootLogs.push(String(m))
+    try { console.log('[bili-scroll] ' + m) } catch { /* 没控制台就算了 */ }
+  })
   /**
    * ⭐ M3：常驻会话的服务**运行时取**，绝不写进 `inject`。
    * 写进 `inject` 的后果（whale 实测）：headless / 精简 profile 里没有这个服务 ⇒
@@ -191,8 +202,9 @@ export function apply(ctx, config) {
   }
   // ⚠️ 2026-10-18 用户实测：徽章显示「环境已就绪」、B站也登录了，可一跑就 `ModuleNotFoundError: No module named 'mcp'`
   //    ⇒ 原判据**只查了 bilibili_api**（0.1.2 修"假就绪"时留下的口子）⇒ 缺 `mcp` / `qrcode` 也照样说就绪 ✗
-  //    ⇒ 三个都得有：bilibili_api（查数据）· mcp（跑那一轮的 MCP 服务器）· qrcode（画登录二维码）
-  const VENV_DEPS = ['bilibili_api', 'mcp', 'qrcode']
+  //    ⇒ M2 起登录二维码由 Node 画（`src/bili/qr.mjs`），Python 的 `qrcode` 只当兜底 ⇒ 不再算"必需"，
+  //      只查两个：bilibili_api（写入类/老路用）· mcp（跑 Python MCP 的那一半）
+  const VENV_DEPS = ['bilibili_api', 'mcp']
   const missingVenvDeps = () => VENV_DEPS.filter((n) => !hasPkg(join(stateDir, '.venv'), n))
   const venvReadyNow = () => existsSync(venvPython()) && missingVenvDeps().length === 0
   const asrReadyNow = () => existsSync(asrPython()) && hasPkg(asrDir, 'faster_whisper')
@@ -252,6 +264,9 @@ function reportMeta() {
     try { ctx.logger?.info?.(`[bili-duty] ${msg}`) } catch { /* 没有 logger 就算了 */ }
   }
 
+  // ⭐ 把启动阶段（stateDirOf → 搬迁 / 建目录）攒下的那几条补进 duty.log
+  for (const m of bootLogs.splice(0)) { try { log(m) } catch { /* 写不进去也不能抛 */ } }
+
   // 宿主依赖是从哪儿取的（桌面版那次事故的排查看这里：duty.log 里会写明白）
   for (const n of hostDeps.notes) log(n)
 
@@ -272,6 +287,7 @@ function reportMeta() {
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     dmMode: 'only', dmUid: 0,
     keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '', reportLevel: 'full', replyToComments: false, replyPerRound: 1, favFolderId: 0,
+    capability: 'node',
   }
   /**
    * ⭐ 2.1 修掉的一个真 bug：`POST /api/bili-duty/config` 的字段白名单以前是**手写**的一串，
@@ -313,6 +329,7 @@ function reportMeta() {
     if ('replyPerRound' in p) p.replyPerRound = Math.max(1, Math.min(Number(p.replyPerRound) || 1, 10))
     if ('favFolderId' in p) p.favFolderId = Math.max(0, Math.floor(Number(p.favFolderId) || 0))
     if ('commentPerRound' in p) p.commentPerRound = Math.max(0, Math.min(Number(p.commentPerRound) || 0, 20))
+    if ('capability' in p) p.capability = ['node', 'python'].includes(String(p.capability)) ? String(p.capability) : 'node'
     return p
   }
 
@@ -545,6 +562,35 @@ function reportMeta() {
     return client.call(toolName, args, opts)
   }
 
+  /* ─────────────── M2：能力层路由（只读三件 = Node / Python 二选一）───────────────
+   * 方案 M2 第一刀：`search` / `subtitle` / `comments` 先搬出 Python；写入类（发评论/私信）不碰。
+   * 干净机器（没有 Python / venv）只要把 `run.capability` 留成 node 就能跑完整一轮。
+   */
+  let nodeBiliClient = null
+  const nodeBili = () => nodeBiliClient || (nodeBiliClient = createNodeBili({ home: stateDir, log }))
+  const capabilityNow = () => (String(cfg.capability || 'node') === 'python' ? 'python' : 'node')
+  /**
+   * 只读工具的统一入口。
+   * · capability=python ⇒ 直接走 MCP（2.0 的老路）
+   * · capability=node   ⇒ 先走内置 Node 实现；**抛错**就退回 MCP（干净机器上 MCP 也没有 ⇒ 两边原因一起报）
+   * ⚠️ 只在"Node 抛错"时回退。Node 正常返回 `{error}` 这类业务错误不回退 —— 那说明接口真失败了，
+   *    换 Python 也会一样失败，只是白多打一次网络。
+   */
+  const readCall = async (toolName, args) => {
+    if (capabilityNow() === 'python') return call(toolName, args)
+    try {
+      return await nodeBili().call(toolName, args)
+    } catch (e) {
+      const why = String(e?.message ?? e)
+      log(`Node 能力层失败（${toolName}）：${why} ⇒ 退回 Python MCP`)
+      try {
+        return await call(toolName, args)
+      } catch (e2) {
+        throw new Error(`Node 能力层失败（${why}）；Python MCP 也不可用（${e2?.message ?? e2}）`)
+      }
+    }
+  }
+
   const hasCredential = () => existsSync(join(stateDir, 'bili_credential.json'))
 
   /* ─────────────── 工具 ─────────────── */
@@ -580,7 +626,7 @@ function reportMeta() {
       if (!hasCredential()) {
         return { ok: false, loggedIn: false, hint: '还没登录：去 dsh 设置页的「刷B站」里点「扫码登录」（凭证会存在插件自己的家目录里）' }
       }
-      const r = await call('bili_check_credential', {})
+      const r = await readCall('bili_check_credential', {})
       return { ok: true, ...(typeof r === 'object' ? r : { raw: r }) }
     },
   })
@@ -595,7 +641,7 @@ function reportMeta() {
       order: { type: 'string', description: 'totalrank=综合（默认）/ click=播放 / pubdate=最新 / dm=弹幕' },
     },
     async execute(args) {
-      return call('bili_search', {
+      return readCall('bili_search', {
         keyword: String(args.keyword ?? ''),
         num: Math.max(1, Math.min(Number(args.num) || 10, 50)),
         order: String(args.order || 'totalrank'),
@@ -608,7 +654,7 @@ function reportMeta() {
     description: '取一个视频的字幕（AI 字幕）全文。**判断内容就靠它** —— 没有字幕时，'
       + '若设置里开了「本地转写」再想别的办法，否则直接跳过这条。',
     parameters: { bvid: { type: 'string', description: 'BV号' } },
-    async execute(args) { return call('bili_subtitle', { bvid: String(args.bvid ?? '') }) },
+    async execute(args) { return readCall('bili_subtitle', { bvid: String(args.bvid ?? '') }) },
   })
 
   tool({
@@ -619,7 +665,7 @@ function reportMeta() {
       num: { type: 'number', description: '取几条（默认 30）' },
     },
     async execute(args) {
-      return call('bili_comments', { bvid: String(args.bvid ?? ''), num: Math.max(1, Number(args.num) || 30) })
+      return readCall('bili_comments', { bvid: String(args.bvid ?? ''), num: Math.max(1, Number(args.num) || 30) })
     },
   })
 
@@ -894,16 +940,30 @@ function reportMeta() {
 
   tool({
     name: 'bili_login_start',
-    description: '开始 B站 扫码登录：出二维码（画成 PNG 存在插件家目录里，返回路径）和一个 key。\n'
+    description: '开始 B站 扫码登录：出二维码（PNG 存在插件家目录里，返回路径）和一个 key。\n'
       + '用法：拿到 PNG 后用 `present` 把它推给本人（手机 B站 → 我的 → 扫一扫），再用 `bili_login_poll` 轮询。\n'
       + '⚠️ 二维码大约 180 秒有效，出码要马上递过去；手机上确认时选「记住我」那种长期登录。',
     parameters: {},
     async execute() {
       const { key, url } = await loginStart()
-      const png = await renderQrPng(cfg.pythonPath, stateDir, url)
+      // ⭐ M2：先纯 Node 画 PNG（不依赖 Python）；实在不行才退回 venv 里的 Python
+      let png = null
+      let source = ''
+      try {
+        const file = join(stateDir, 'qrcode_login.png')
+        writeFileSync(file, renderQrPngNode(url))
+        png = file
+        source = 'node'
+      } catch (e) { log('Node 画 PNG 失败（改试 Python）：' + String(e?.message ?? e)) }
+      if (!png) {
+        png = await renderQrPng(cfg.pythonPath, stateDir, url)
+        source = png ? 'python' : ''
+      }
       return {
-        ok: true, key, url, png,
-        hint: png ? '用 present 把这张 PNG 推给本人扫；扫完调 bili_login_poll' : '没画出 PNG：先去设置里点「建 venv 装依赖」（venv 里要有 qrcode）',
+        ok: true, key, url, png, source,
+        hint: png
+          ? '用 present 把这张 PNG 推给本人扫（手机上确认时选「记住我 / 长期」）；扫完调 bili_login_poll'
+          : '没画出二维码：让本人直接打开设置页「刷B站」点「扫码登录」，或把诊断信息发给作者',
       }
     },
   })
@@ -1273,6 +1333,33 @@ function reportMeta() {
   }
 
   /**
+   * ⭐ M3 状态卡：每次唤醒先塞一张"账本摘要"进提示词 —— 今天挑了几条 / 阈值 / 最近 7 天
+   *   看过什么 / 她上次给自己写的最后三行。常驻会话的上下文会一直长，状态卡是她每轮的
+   *   **记忆锚点**；一次性进程那条路也塞在 prompt 开头（功能等价，只是没有会话内连续性）。
+   * ⚠️ 卡拼不出来绝不许拦着这一轮 ⇒ 整块包在 try 里，失败就退回原提示词。
+   * ⚠️ 调它的时候 apply() 的主体已经执行完 ⇒ 下面那些 const（dutyStateFile / seenFile …）都初始化了。
+   */
+  const promptWithCard = () => {
+    const base = promptFor()
+    try {
+      const card = buildStatusCard({
+        now: Date.now(),
+        today: dayKey(),
+        pickedToday: countPickedToday(),
+        cfgNew: readConfig(cfgFile).config,
+        state: readJson(dutyStateFile, {}),
+        seenText: (() => { try { return readFileSync(seenFile, 'utf8') } catch { return '' } })(),
+        shares: readLedger(sharesFile),
+        lastSelfDiary: lastEntryAny(memoryDir, 'self', { max: 400 }),
+      })
+      return card ? card + '\n\n' + base : base
+    } catch (e) {
+      try { log('状态卡拼不出来（这一轮照跑）：' + String(e?.message ?? e)) } catch { /* 忽略 */ }
+      return base
+    }
+  }
+
+  /**
    * 给 headless 那一轮写一份 overlay —— 把 B站 MCP 挂上去。
    * 🔴 为什么需要它：**某个 profile 能拿到什么工具，取决于它自己那层的 patch**
    *    （headless 里那两条 B站 MCP 就是当初手写进去的）。分发给别人时不能要求人家改 profile，
@@ -1492,7 +1579,7 @@ function reportMeta() {
     const wantSession = !opts.forceSpawn && String(cfg.runMode || 'auto') !== 'spawn'
     if (wantSession && hasSession(sessionController())) {
       const cwd = stateDir
-      const text = promptFor()
+      const text = promptWithCard()
       log(`刷B站开跑（${why}）：常驻会话 mode=queue  cwd=${cwd}`)
       dutyBusy = why
       stopWatchdog = createWatchdog({
@@ -1525,7 +1612,7 @@ function reportMeta() {
     const overlay = ensureOverlay()
     const args = [...dsh.args, '--profile', cfg.headlessProfile || 'headless']
     if (overlay) args.push('--patch', overlay)
-    args.push(promptFor())
+    args.push(promptWithCard())
     // ⭐ 这一轮的工作目录 = 使用者（或别的用户）的**工作区** —— 只有这样它的 `AGENTS.md` 才会自动加载。
     // ⭐ 工作目录 = **插件家**：那一轮**被沙箱关着**，只写得了自己工作目录里的东西 ✗
     //    （2026-10-14 教训：为了让它读工作区里的 AGENTS.md 把 cwd 改成工作区 ⇒
@@ -2205,18 +2292,30 @@ function reportMeta() {
   /** 「测一下」：真跑一次查询再下结论（判据落在载荷上，不看自报） */
   const checkUp = async () => {
     const out = { ok: false, steps: [] }
-    if (!venvReadyNow()) { out.error = '环境还没装好（可能上次装失败了）—— 点「重装主依赖」再试一次'; return out }
+    const cap = capabilityNow()
+    // python 模式才要求 venv；node 模式下只读三件不碰 Python（写操作另说）
+    if (cap === 'python' && !venvReadyNow()) { out.error = '环境还没装好（可能上次装失败了）—— 点「重装主依赖」再试一次'; return out }
     if (!hasCredential()) { out.error = '还没登录：点「扫码登录」，手机 B站 扫一下'; return out }
+    if (cap === 'node') {
+      out.steps.push('能力层：Node（只读 + 登录检查，不依赖 Python）')
+      try {
+        const who = await readCall('bili_check_credential', {})
+        out.who = (typeof who === 'object' ? JSON.stringify(who) : String(who)).slice(0, 140)
+        if (who && who.logged_in === false) { out.error = 'B站 凭证无效或已过期 —— 重新扫码登录'; return out }
+        out.steps.push('登录有效')
+      } catch (e) { out.error = '登录检查失败：' + (e?.message ?? e); return out }
+    } else {
+      try {
+        const who = await call('bili_check_credential', {})
+        out.who = (typeof who === 'object' ? JSON.stringify(who) : String(who)).slice(0, 140)
+        out.steps.push('登录有效')
+      } catch (e) { out.error = '登录检查失败：' + (e?.message ?? e); return out }
+    }
     try {
-      const who = await call('bili_check_credential', {})
-      out.who = (typeof who === 'object' ? JSON.stringify(who) : String(who)).slice(0, 140)
-      out.steps.push('登录有效')
-    } catch (e) { out.error = '登录检查失败：' + (e?.message ?? e); return out }
-    try {
-      const s = await call('bili_search', { keyword: 'DeepSeek Harness', num: 3 })
+      const s = await readCall('bili_search', { keyword: 'DeepSeek Harness', num: 3 })
       const t = typeof s === 'string' ? s : JSON.stringify(s)
       out.sample = t.slice(0, 160)
-      out.steps.push('能搜到东西')
+      out.steps.push(cap === 'node' ? 'Node 能搜到东西' : '能搜到东西')
       out.ok = t.length > 2
       if (!out.ok) out.error = '搜到了空结果'
     } catch (e) { out.error = '搜索失败：' + (e?.message ?? e) }
@@ -2586,6 +2685,13 @@ function reportMeta() {
         'dsh：' + (() => { try { const d = resolveDsh(); return d.missing ? '没找到（' + d.hint + '）' : d.command + ' ' + d.args.join(' ') } catch (e) { return '探测失败：' + e?.message } })(),
         'headless profile：' + (cfg.headlessProfile || 'headless'),
         'pythonPath：' + cfg.pythonPath,
+        '能力层：' + (capabilityNow() === 'node' ? 'node（只读三件走内置；失败自动退回 MCP）' : 'python（只读三件走 MCP）'),
+        'Node 能力层：' + (() => {
+          try {
+            const st = nodeBili().state()
+            return (st.banned ? '熔断中（约 ' + st.banMinutesLeft + ' 分钟）' : '正常') + ' · 缓存 ' + st.cacheEntries + ' 条'
+          } catch (e) { return '不可用：' + (e?.message ?? e) }
+        })(),
         'venv 就绪：' + (venvReadyNow() ? '是' : '否') + (missingVenvDeps().length ? '（缺：' + missingVenvDeps().join(' / ') + '）' : ''),
         '转写环境：' + (existsSync(join(stateDir, '.venv-asr')) ? '在' : '没装'),
         'B站 登录：' + (hasCredential() ? '有凭证' : '没有凭证'),
@@ -2609,8 +2715,12 @@ function reportMeta() {
       // ① dsh
       try { const d = resolveDsh(); put('能找到 dsh（跑一轮要用）', !d.missing, d.missing ? '没找到：' + d.hint : (d.command + ' ' + (d.args || []).join(' ')), '在设置页「dsh 路径」里填上 …/@deepseek-ai/dsh/lib/bin.js') }
       catch (e) { put('能找到 dsh（跑一轮要用）', false, String(e?.message ?? e), '同上') }
-      // ② Python
-      put('Python 主依赖装好了', venvReadyNow(), missingVenvDeps().length ? '缺：' + missingVenvDeps().join(' / ') : '就绪', '点「重装主依赖」，等它跑完再看这里')
+      // ② 能力层：node 模式不要求 Python（写操作/转写才要）；python 模式要求 venv
+      if (capabilityNow() === 'node') {
+        put('只读能力层（搜索/字幕/评论）', true, 'Node 内置实现 —— 不依赖 Python；失败会自动退回 MCP', '')
+      } else {
+        put('Python 主依赖装好了', venvReadyNow(), missingVenvDeps().length ? '缺：' + missingVenvDeps().join(' / ') : '就绪', '点「重装主依赖」，等它跑完再看这里')
+      }
       // ③ 凭证
       put('B站 已登录', hasCredential(), hasCredential() ? '家目录里有凭证文件' : '还没有凭证', '点「扫码登录」，手机确认时选「记住我 / 长期」')
       // ④ 家目录可写
@@ -2651,13 +2761,18 @@ function reportMeta() {
     }
 
     // ── 扫码登录（设置页用）──
+    // ⭐ M2：二维码先用**纯 Node** 画（SVG，不需要 Python）；Node 那边失败才退回 venv 里的 Python
     if (req.method === 'POST' && path === '/api/bili-duty/login/start') {
       const { key, url } = await loginStart()
-      const png = await renderQrPng(cfg.pythonPath, stateDir, url)
       let qr = null
-      if (png) { try { qr = 'data:image/png;base64,' + readFileSync(png).toString('base64') } catch { qr = null } }
-      log(`出码：${url}${qr ? '（已画成 PNG）' : '（没画出 PNG —— venv 里大概还没有 qrcode）'}`)
-      return sendJson(res, 200, { ok: true, key, url, qr })
+      let how = ''
+      try { qr = renderQrDataUri(url); how = 'Node 画的 SVG' } catch (e) { log('Node 画二维码失败（改试 Python）：' + String(e?.message ?? e)) }
+      if (!qr) {
+        const png = await renderQrPng(cfg.pythonPath, stateDir, url)
+        if (png) { try { qr = 'data:image/png;base64,' + readFileSync(png).toString('base64'); how = 'Python 画的 PNG' } catch { qr = null } }
+      }
+      log(`出码：${url}${qr ? '（' + how + '）' : '（没画出来 —— 设置页里也不会有二维码；看上面那条日志）'}`)
+      return sendJson(res, 200, { ok: true, key, url, qr, qrSource: qr ? how : 'none' })
     }
 
     if (req.method === 'POST' && path === '/api/bili-duty/login/poll') {

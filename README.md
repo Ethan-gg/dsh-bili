@@ -143,6 +143,8 @@ dsh plugin --profile web add dsh-bili-scroll
   搜索 / 字幕 / 评论 / 发评论这些能力来自它；本插件只做「**挑什么、什么时候挑、要不要说话**」这一层
 - 需要本机有 **Python 3.10+**（会用 `uv` 或 `python -m venv` 建独立环境），不需要它已经进 PATH
 - Python 依赖只有 4 个（`bilibili-api-python` / `aiohttp` / `qrcode` / `mcp`，见 `vendor/bilibili-mcp/requirements.txt`）；`mcp` **必须锁 `<2`**（2.x 起不来）
+  - 2.1 起 **`qrcode` 只当兜底**：登录二维码由插件自己用 Node 画（`src/bili/qr.mjs`）——
+    只读三件（搜索 / 字幕 / 评论）也已经 Node 化，干净机器不装 Python 就能跑到出报告（写入类仍走 Python）
 
 ## 路线图
 

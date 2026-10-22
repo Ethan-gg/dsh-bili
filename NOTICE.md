@@ -9,6 +9,13 @@
 - 许可证：**MIT**，Copyright (c) 2026 AGI_Ananas
 - 完整许可见该目录下的 `LICENSE`
 
+- 目录：`vendor/qrcode/`
+- 项目：**qrcode-svg**（MIT，纯 JS、零依赖）—— 用来在**不装 Python** 的机器上画登录二维码
+  - 上游：https://github.com/papnkukn/qrcode-svg（`lib/qrcode.js`；其中 QR 编码算法来自
+    Kazuhiko Arase 的 *QRCode for JavaScript*，同样是 MIT）
+  - 存放为 `qrcode.cjs`：本包是 ESM，vendor 的 CJS 用 `.cjs` 才不会被 Node 当成 ESM
+- 完整许可见该目录下的 `LICENSE`
+
 ## 移植自其他 MIT 项目的部分（2.1 起）
 
 2.1 开始，本项目吸收 [`dsh-bili-whale`](https://github.com/Alterssss/dsh-bili-whale)（**MIT**）的部分设计与代码：

@@ -61,6 +61,36 @@
 - **M1 第一块：生物钟**（`src/host/clock.mjs`）—— 移植自 `dsh-bili-whale` 的 `night-plan.mjs`（MIT）。
   窗口内随机时刻、两次醒来硬间隔、每天次数上限、`skip`（今天不想看）只占一次机会不拉黑整段窗口、
   计划先落盘再唤醒（跨午夜/重启不重掷）、历史只留 3 天。目前是**纯模块 + 测试**，还没接进定时器。
+- **M3 收尾：章程按常驻会话改成"无条件"**（2026-10-22）：真机上确认 `常驻会话 mode=queue` 生效后，
+  `duty.md` 不再写"看你手里有什么工具"：每轮**必须**调 `bili_done`、**必须**写两本日记，
+  陌生人回复**一律**先 `bili_draft` 进待审（不许用 `bili_reply` 绕过本人点头）；
+  同时删掉"你手里只有六个工具"那句（M3 之后已经不成立，留着反而会让她跳过日记）。
+  唯一例外：退回一次性进程的轮次没有这些宿主工具 —— 那种情况跳过、宿主自己收尾。
+- **迁移把老配置里的绝对路径改到新家**（2026-10-22）：`bili-duty/` rename 成 `bili/` 之后，
+  老 `config.json` 的 `run.pythonPath` 还指着 `...bili-duty\.venv\...` ⇒ 升级后第一轮 MCP
+  `spawn ... ENOENT`（真机撞到，靠那一轮自己改配置才救回来）。现在迁移时把「就在老家里面」的路径
+  跟着改到新家（`'python'` / 自定义解释器不动），并记进 `MIGRATION.md` 与 `.migrated-v1` 的 `rewritten`。
+- **搬迁日志也写进 duty.log 了**（2026-10-22）：家目录准备（搬迁 / 建目录）发生在 duty.log 的 logger
+  建好之前，原来只打到宿主控制台 ⇒ 用户按文档去 duty.log 找不到「搬进来：config.json」。
+  现在启动时先攒着，logger 一就绪就补写进 duty.log（桌面版后端日志里那份也还在）。
+- **M3 状态卡**（2026-10-22）：每轮唤醒时宿主先按账本拼一张 **≤1500 字**的卡 ——
+  今天挑了几条 / 还能挑几条 / 阈值 / 最近 7 天判重摘要 / 她上次给自己写的最后三行 ——
+  常驻会话与一次性进程**两条跑法都**塞进提示词开头。她不用自己翻文件，也不会被旧上下文误导。
+  `diary.mjs` 顺带加了 `lastEntryAny()`（今天还没动笔就往前找最近一天）。
+  compaction 不用自己写：`dsh-base` 自带 `compaction-basic` / `command-compact` /
+  `tool-result-pruner`，本 profile 已挂着。
+- **M2 第一刀：只读三件 Node 化**（2026-10-22）：新增 `src/bili/`（`wbi.mjs` 签名 / `http.mjs`
+  缓存 + 300ms 节流 + 412 熔断 / `index.mjs` 的 `search` / `subtitle` / `comments`），返回形状与
+  Python MCP 逐字段一致；配 `run.capability = node | python`（默认 **node**，Node 抛错自动退回 MCP）。
+  干净机器不装 Python 也能跑只读那一轮。写入类（发评论 / 私信）**这刀不碰**，仍走 Python。
+  设置页「高级」加了切换；「测一下」/诊断信息也会显示当前能力层与缓存/熔断状态。
+  （首次扫码登录的二维码同一天也 Node 化了，见下条。）
+- **M2 第二刀：扫码登录也不需要 Python 了**（2026-10-22）：vendor 一份 **qrcode-svg**（MIT、纯 JS、零依赖，
+  `vendor/qrcode/qrcode.cjs`）—— 设置页出码直接产 **SVG data URI**（~9KB），`bili_login_start` 工具产
+  **PNG**（PNG 容器 + zlib 压缩用 Node 内置，不引第三方）；Node 失败才退回 Python。
+  `bili_whoami` 也接进 Node 能力层（nav 的登录态），所以 node 模式下「测一下」/登录检查也不再需要 Python。
+  ⭐ 用独立解码器 jsQR 验过：SVG 与矩阵逐格一致、PNG 解码回原 URL。`VENV_DEPS` 去掉 `qrcode`（只剩兜底），
+  设置页/群里那条"装依赖才能出码"的旧提示同步改掉。
 
 ## 2.0.0 — 2026-10-21
 
