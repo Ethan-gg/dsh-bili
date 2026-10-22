@@ -13,9 +13,9 @@
   "scripts": {
     "test": "node --test test/"
   },
-  "repository": { "type": "git", "url": "git+https://github.com/Ethan-gg/dsh-bili-scroll.git" },
-  "homepage": "https://github.com/Ethan-gg/dsh-bili-scroll#readme",
-  "bugs": { "url": "https://github.com/Ethan-gg/dsh-bili-scroll/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/Ethan-gg/dsh-bili.git" },
+  "homepage": "https://github.com/Ethan-gg/dsh-bili#readme",
+  "bugs": { "url": "https://github.com/Ethan-gg/dsh-bili/issues" },
   "license": "MIT",
   "type": "module",
   "main": "index.js",
