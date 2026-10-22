@@ -107,7 +107,11 @@
   统一走 `writeCall`（Node 优先、异常自动退回 MCP），回执判断收进 `writeOk`（兼容 Python `{success}` /
   Node `{success,code}` / 2.0 纯文本）。沙盒端到端验证：发评论记 rpid 并记账、私信 dev_id 复用、
   只允许发给设置里的人、`dmMode=off` 时拦截、待审批准走同一段逻辑。
-  还剩 `danmaku` / `video-content`（看弹幕 / 抽帧）没搬。
+- **M2 第四刀（M2 完成）：弹幕 / 抽帧也 Node 化了**（2026-10-22）：新模块 `src/bili/danmaku.mjs`
+  （老 XML 端点 → 热区分桶 / 高频梗 / 抽样）、`src/bili/ffmpeg.mjs`（找 ffmpeg、抽单帧，
+  **可选依赖**：没装就返回"跳过"不算错）；`http.mjs` 增加 `getText()`（非 JSON 原文，同样节流 + 熔断）；
+  宿主新增工具 `bili_danmaku` / `bili_frames`，章程里写成"辅助选项、不必每条都用"。
+  真机只读验证：弹幕拿到真实数据；本机没 ffmpeg ⇒ `frames` 正确降级。
 
 ## 2.0.0 — 2026-10-21
 

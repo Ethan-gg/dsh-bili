@@ -51,7 +51,7 @@ test('待审草稿：入队靠工具、发出靠人点头，宿主三个接口�
  * 否则那个兜底跑法会去调根本不存在的工具、白烧一轮。
  */
 const MCP_TOOLS = ['bili_search', 'bili_subtitle', 'bili_comments', 'bili_video_info', 'bili_reply', 'bili_send_message']
-const HOST_ONLY_TOOLS = ['bili_diary', 'bili_draft', 'bili_done', 'bili_say']
+const HOST_ONLY_TOOLS = ['bili_diary', 'bili_draft', 'bili_done', 'bili_say', 'bili_danmaku', 'bili_frames']
 
 test('提示词提宿主专属工具时，必须写清「退回一次性进程」那一轮怎么办', () => {
   const duty = readFileSync(new URL('../prompts/duty.md', import.meta.url), 'utf8')
@@ -132,6 +132,12 @@ test('宿主工具仍然在（交互会话与常驻会话里都能用）', () =>
   assert.match(INDEX, /name: 'bili_diary'/, '写日记的手（宿主侧）')
   assert.match(INDEX, /name: 'bili_draft'/, '待审草稿的手（宿主侧）')
   assert.match(INDEX, /name: 'bili_done'/, '收工的手（常驻会话靠它收尾）')
+  assert.match(INDEX, /name: 'bili_say'/, '回群的手（云桥）')
+  assert.match(INDEX, /name: 'bili_send_message'/, '发私信的手（M2 收尾，常驻会话里也能用）')
+  assert.match(INDEX, /name: 'bili_danmaku'/, '看弹幕的手（M2 最后一块）')
+  assert.match(INDEX, /name: 'bili_frames'/, '抽帧看画面的手（M2 最后一块）')
+  assert.match(INDEX, /nodeBili\(\)\.call\('bili_danmaku'/, '弹幕要走 Node 能力层')
+  assert.match(INDEX, /nodeBili\(\)\.call\('bili_frames'/, '抽帧要走 Node 能力层')
 })
 
 test('两本日记真有写入者（whale 那个「只有提示词、没有代码」的坑不能重演）', () => {

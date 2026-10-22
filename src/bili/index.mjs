@@ -20,6 +20,8 @@ import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { createBiliHttp, USER_AGENT } from './http.mjs'
 import { mixinKey, signQuery } from './wbi.mjs'
+import { parseDanmakuXml, summarizeDanmaku } from './danmaku.mjs'
+import { findFfmpeg, runFfmpeg } from './ffmpeg.mjs'
 
 const API = 'https://api.bilibili.com'
 /** 搜索排序：只认这几种（认不出就退回综合） */
@@ -32,9 +34,12 @@ const stripTags = (s) => String(s ?? '').replace(/<[^>]+>/g, '').trim()
  * @param {Function} [p.fetchImpl]            fetch（单测注入）
  * @param {() => number} [p.now]              时钟（单测注入）
  * @param {Function} [p.sleep]                节流等待（单测注入）
+ * @param {string} [p.ffmpegBin]              ffmpeg 路径（默认自动找；找不到就看画面这步跳过）
+ * @param {Function} [p.runFfmpeg]            跑 ffmpeg（单测注入）
+ * @param {Function} [p.findFfmpeg]           找 ffmpeg（单测注入；返回 null = 没装）
  * @param {(m:string)=>void} [p.log]
  */
-export function createNodeBili({ home, fetchImpl, now, sleep, log = () => {} } = {}) {
+export function createNodeBili({ home, fetchImpl, now, sleep, ffmpegBin, runFfmpeg: runFfmpegImpl, findFfmpeg: findFfmpegImpl, log = () => {} } = {}) {
   if (!home) throw new Error('createNodeBili 需要 home（插件家目录）')
   const clock = now || (() => Date.now())
   const http = createBiliHttp({ home, fetchImpl, now: clock, sleep, log })
@@ -288,6 +293,73 @@ export function createNodeBili({ home, fetchImpl, now, sleep, log = () => {} } =
     }
   }
 
+  /* ───────────────────── 看弹幕 / 看画面（M2 最后一块）───────────────────── */
+
+  /** 弹幕：热区 + 高频梗 + 抽样（只读；没有弹幕就返回 count=0，不是错） */
+  async function danmaku({ bvid } = {}) {
+    const id = String(bvid ?? '').trim()
+    if (!id) throw new Error('bvid 是空的')
+    const info = await videoView(id)
+    const cid = Number(info?.cid) || Number(info?.pages?.[0]?.cid) || 0
+    if (!cid) return { bvid: id, count: 0, error: '无法获取cid' }
+    const r = await http.getText(`${API}/x/v1/dm/list.so?oid=${cid}`, headers(videoRef(id)))
+    if (!r.ok) {
+      return { bvid: id, title: String(info?.title ?? ''), count: 0, heat: [], top: [], sample: [], error: `弹幕拉取失败：${r.error}` }
+    }
+    const list = parseDanmakuXml(r.text)
+    return {
+      bvid: id,
+      title: String(info?.title ?? ''),
+      duration: Number(info?.duration) || 0,
+      ...summarizeDanmaku(list, { duration: Number(info?.duration) || 0 }),
+    }
+  }
+
+  /**
+   * 抽帧看画面（纯画面/无声视频用）。**ffmpeg 可选**：没装就直接说跳过，不算错。
+   * @param {{bvid:string, times?:number[], max?:number}} args
+   */
+  async function frames({ bvid, times, max = 4 } = {}) {
+    const id = String(bvid ?? '').trim()
+    if (!id) throw new Error('bvid 是空的')
+    const info = await videoView(id)
+    const title = String(info?.title ?? '')
+    const bin = ffmpegBin || (findFfmpegImpl || findFfmpeg)()
+    if (!bin) return { ok: false, bvid: id, title, message: '这台机器没装 ffmpeg —— 看画面这步跳过（只用字幕/弹幕判断就行）' }
+
+    const cid = Number(info?.cid) || Number(info?.pages?.[0]?.cid) || 0
+    if (!cid) return { ok: false, bvid: id, title, error: '无法获取cid' }
+    const key = await wbiKey()
+    const q = signQuery({ bvid: id, cid, qn: 64, fnval: 1, fourk: 0, platform: 'pc' }, key, clock())
+    const pu = await http.get(`${API}/x/player/wbi/playurl?${q}`, headers(videoRef(id)))
+    if (Number(pu?.code) !== 0) return { ok: false, bvid: id, title, error: `拿不到播放地址 code=${pu?.code} ${pu?.message ?? ''}`.trim() }
+    const url = pu?.data?.durl?.[0]?.url
+      || pu?.data?.dash?.video?.[0]?.baseUrl
+      || pu?.data?.dash?.video?.[0]?.base_url
+      || ''
+    if (!url) return { ok: false, bvid: id, title, error: '播放地址里没有可抽帧的 url' }
+
+    const dur = Number(info?.duration) || 0
+    const wanted = Array.isArray(times) && times.length
+      ? times.map(Number).filter((n) => Number.isFinite(n) && n >= 0)
+      : [Math.max(1, Math.round(dur * 0.15)), Math.max(1, Math.round(dur * 0.5)), Math.max(1, Math.round(dur * 0.85))]
+    const list = wanted.slice(0, Math.max(1, Math.min(6, Number(max) || 4)))
+    const dir = join(home, 'tmp', 'frames')
+    mkdirSync(dir, { recursive: true })
+    const out = []
+    for (const t of list) {
+      const file = join(dir, `${id}-${Math.round(t)}.jpg`)
+      const args = [
+        '-y', '-ss', String(t),
+        '-headers', `Referer: ${videoRef(id)}\r\nUser-Agent: ${USER_AGENT}\r\n`,
+        '-i', url, '-frames:v', '1', '-q:v', '3', file,
+      ]
+      const r = await (runFfmpegImpl || runFfmpeg)(bin, args)
+      out.push({ at: Math.round(t), ok: Boolean(r?.ok), path: r?.ok ? file : null, ...(r?.ok ? {} : { error: String(r?.stderr ?? '').slice(-200) }) })
+    }
+    return { ok: out.some((x) => x.ok), bvid: id, title, frames: out }
+  }
+
   const METHODS = {
     bili_search: search,
     bili_subtitle: subtitle,
@@ -295,6 +367,8 @@ export function createNodeBili({ home, fetchImpl, now, sleep, log = () => {} } =
     bili_check_credential: whoami,
     bili_reply: reply,
     bili_send_message: sendMessage,
+    bili_danmaku: danmaku,
+    bili_frames: frames,
   }
 
   return {
@@ -304,6 +378,8 @@ export function createNodeBili({ home, fetchImpl, now, sleep, log = () => {} } =
     whoami,
     reply,
     sendMessage,
+    danmaku,
+    frames,
     /** 宿主按工具名统一路由（和 MCP 的 `call(name, args)` 对得上） */
     call(name, args = {}) {
       const fn = METHODS[name]

@@ -721,6 +721,39 @@ function reportMeta() {
     },
   })
 
+  tool({
+    name: 'bili_danmaku',
+    description: '看一条视频的弹幕：哪里最热闹（热区）、大家在刷什么梗（高频）。'
+      + '这是判断"值不值得看"的第二双眼睛（字幕看内容，弹幕看反应）。不必每条都看，只在拿不准时翻一眼。',
+    parameters: { bvid: { type: 'string', description: 'BV号' } },
+    async execute(args) {
+      try { return await nodeBili().call('bili_danmaku', { bvid: String(args.bvid ?? '') }) } catch (e) {
+        return { ok: false, error: String(e?.message ?? e) }
+      }
+    },
+  })
+
+  tool({
+    name: 'bili_frames',
+    description: '抽几帧看画面（纯演示 / 无声视频用）。**需要这台机器装了 ffmpeg**；没有就直接说跳过、不算错。'
+      + '返回抽出来的图片路径（可以再看图判断）。',
+    parameters: {
+      bvid: { type: 'string', description: 'BV号' },
+      times: { type: 'string', description: '逗号分隔的秒数（可选；不填就按 15% / 50% / 85% 抽三帧）' },
+      max: { type: 'number', description: '最多抽几帧（默认 4，最多 6）' },
+    },
+    async execute(args) {
+      const times = String(args.times ?? '').split(/[,，\s]+/).map(Number).filter((n) => Number.isFinite(n) && n >= 0)
+      try {
+        return await nodeBili().call('bili_frames', {
+          bvid: String(args.bvid ?? ''),
+          times,
+          max: Math.max(1, Math.min(6, Number(args.max) || 4)),
+        })
+      } catch (e) { return { ok: false, error: String(e?.message ?? e) } }
+    },
+  })
+
   /* ─────────────── 2.1：分享闸门 + 账本（`src/host/gate.mjs`）───────────────
    * 接入方式刻意做成**向后兼容**：只有当调用方传了 `score` 时才判。
    * 为什么：2.0 的提示词不带 score/reason，一上来就强制会被判"没理由"⇒ 全线拒绝 ⇒ 用户以为插件坏了。

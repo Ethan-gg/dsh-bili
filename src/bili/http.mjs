@@ -258,6 +258,29 @@ export function createBiliHttp({
     }
   }
 
+  /** 取一段**非 JSON** 的原文（弹幕 XML 这种）：同样节流 + 熔断，不缓存 */
+  async function getText(input, headers = {}, opts = {}) {
+    const url = new URL(input)
+    const banned = noCache() || !isBili(url.href) ? 0 : bannedUntil()
+    if (banned) return { ok: false, status: 412, text: '', error: `HTTP 412 —— 本机被 B站 限流了，约 ${banLeftMinutes(banned)} 分钟后自动恢复` }
+    try {
+      await throttle()
+      const res = await fetchImpl(url.href, { headers, signal: AbortSignal.timeout(Number(opts.timeoutMs) || 30000) })
+      if (isBili(url.href) && (res.status === 412 || res.status === 429)) {
+        const prev = readJson(banFile, {})
+        const streak = Number(prev.streak ?? 0) + 1
+        const mins = Math.min(30, 5 * 2 ** (streak - 1))
+        if (!noCache()) setBan(mins * 60_000, `HTTP ${res.status}`, { streak, endpoint: url.pathname })
+        return { ok: false, status: res.status, text: '', error: `HTTP ${res.status}（B站 风控）—— 已熔断 ${mins} 分钟` }
+      }
+      if (!res.ok) return { ok: false, status: res.status, text: '', error: `HTTP ${res.status}` }
+      return { ok: true, status: res.status, text: await res.text() }
+    } catch (e) {
+      log(`B站 原文请求失败：${url.pathname} —— ${e?.message ?? e}`)
+      return { ok: false, status: 0, text: '', error: `请求失败：${e?.message ?? e}` }
+    }
+  }
+
   /** 给诊断/排障看：现在是不是被熔断、缓存了几条 */
   function state() {
     const ban = readJson(banFile, {})
@@ -270,5 +293,5 @@ export function createBiliHttp({
     }
   }
 
-  return { get, post, state, files: { cacheFile, banFile } }
+  return { get, post, getText, state, files: { cacheFile, banFile } }
 }

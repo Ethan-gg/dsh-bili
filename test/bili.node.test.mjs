@@ -12,10 +12,12 @@ import { createNodeBili } from '../src/bili/index.mjs'
 
 const img = (stem) => `https://i0.hdslb.com/bfs/wbi/20241022/${stem}.png`
 const NAV = { code: 0, data: { wbi_img: { img_url: img('a'.repeat(32)), sub_url: img('b'.repeat(32)) } } }
-const okRes = (body) => ({ ok: true, status: 200, text: async () => JSON.stringify(body) })
+const okRes = (body) => (body && body.__raw !== undefined
+  ? { ok: true, status: 200, text: async () => body.__raw }
+  : { ok: true, status: 200, text: async () => JSON.stringify(body) })
 
 /** 按路径把假响应排成一张表；顺带记住每次请求的 URL / headers */
-function setup(routes) {
+function setup(routes, opts = {}) {
   const home = mkdtempSync(join(tmpdir(), 'bili-node-'))
   mkdirSync(join(home, '.cache'), { recursive: true })
   writeFileSync(join(home, 'bili_credential.json'), JSON.stringify({ sessdata: 'S', bili_jct: 'J', buvid3: 'B' }), 'utf8')
@@ -29,7 +31,7 @@ function setup(routes) {
     if (u.pathname.endsWith('/nav')) return okRes(NAV)
     throw new Error('unexpected URL: ' + u.href)
   }
-  const bili = createNodeBili({ home, fetchImpl, now: () => nowMs, sleep: async () => {}, log: () => {} })
+  const bili = createNodeBili({ home, fetchImpl, now: () => nowMs, sleep: async () => {}, log: () => {}, ...opts })
   return { bili, calls, home }
 }
 
@@ -192,6 +194,49 @@ test('sendMessage：nav 取 sender、固定 dev_id、form body 齐全；太长�
   const tooLong = await bili.sendMessage({ receiver_uid: 9, text: 'x'.repeat(501) })
   assert.equal(tooLong.success, false)
   assert.match(tooLong.error, /太长/)
+})
+
+test('danmaku：拉 XML 弹幕，回热区 / 高频梗 / 抽样', async () => {
+  const xml = '<?xml version="1.0"?><i><d p="12.5,1,25,16777215,1750000000,0,u1,d1">前排</d>'
+    + '<d p="13.0,1,25,16777215,1750000000,0,u2,d2">前排</d>'
+    + '<d p="88.2,1,25,16777215,1750000000,0,u3,d3">这段讲得好</d></i>'
+  const { bili } = setup([
+    [isView, { code: 0, data: { bvid: 'BV1xx411c7mD', aid: 42, cid: 9, title: 'T', duration: 120 } }],
+    [(u) => u.pathname.endsWith('/x/v1/dm/list.so'), { __raw: xml }],
+  ])
+  const r = await bili.call('bili_danmaku', { bvid: 'BV1xx411c7mD' })
+  assert.equal(r.title, 'T')
+  assert.equal(r.count, 3)
+  assert.equal(r.duration, 120)
+  assert.equal(r.top[0].text, '前排')
+  assert.equal(r.top[0].count, 2)
+  assert.ok(r.hot.length >= 1 && r.hot[0].count >= 1)
+  assert.equal(r.sample.length, 3)
+})
+
+test('frames：有 ffmpeg 就抽帧（URL/参数对），没 ffmpeg 就明确说跳过', async () => {
+  const calls = []
+  const ff = async (bin, args) => { calls.push({ bin, args }); return { ok: true, code: 0 } }
+  const on = setup([
+    [isView, { code: 0, data: { bvid: 'BV1xx411c7mD', aid: 42, cid: 9, title: 'T', duration: 100 } }],
+    [(u) => u.pathname.endsWith('/x/player/wbi/playurl'), { code: 0, data: { durl: [{ url: 'https://cdn.example/v.mp4' }] } }],
+  ], { ffmpegBin: 'ffmpeg-fake', runFfmpeg: ff })
+  const r = await on.bili.call('bili_frames', { bvid: 'BV1xx411c7mD', times: [10, 50] })
+  assert.equal(r.ok, true)
+  assert.equal(r.frames.length, 2)
+  assert.equal(r.frames[0].at, 10)
+  assert.match(String(r.frames[0].path), /tmp[\\/]frames[\\/]BV1xx411c7mD-10\.jpg$/)
+  assert.equal(calls[0].bin, 'ffmpeg-fake')
+  assert.ok(calls[0].args.includes('-frames:v'))
+  assert.ok(calls[0].args.includes('https://cdn.example/v.mp4'))
+  assert.match(String(calls[0].args[calls[0].args.indexOf('-headers') + 1]), /Referer: https:\/\/www\.bilibili\.com/)
+
+  const off = setup([
+    [isView, { code: 0, data: { bvid: 'BV1xx411c7mD', aid: 42, cid: 9, title: 'T', duration: 100 } }],
+  ], { findFfmpeg: () => null })
+  const r2 = await off.bili.frames({ bvid: 'BV1xx411c7mD' })
+  assert.equal(r2.ok, false)
+  assert.match(r2.message, /没装 ffmpeg/)
 })
 
 test('call()：只读与写入都认；未知工具明确拒绝', () => {
