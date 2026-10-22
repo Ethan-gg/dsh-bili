@@ -1,6 +1,6 @@
 # 给 AI 助手看的（本仓库 = 一个 DSH 插件）
 
-`dsh-bili-scroll`（中文名「**B站鱼娘**」；由「刷B站」（dsh-bili-scroll）与「养鱼」（dsh-bili-whale）两个项目合并而成的新项目）：每天替用户刷一轮 B 站 —— 搜、**读字幕原文**判断、写一份日报，特别值得的会发一条评论 **@ 用户**。
+`dsh-bili-scroll`（中文名「**B站鱼娘**」）：一个 DSH 插件 —— 每天替用户刷一轮 B 站：搜、**读字幕原文**判断、写一份日报，特别值得的会发一条评论 **@ 用户**。
 
 ## 帮用户安装时，按这个顺序
 
@@ -24,7 +24,7 @@
 ## ⚠️ 已知环境差异（有用户反馈）
 
 - ⭐⭐ **桌面版 DSH（NEXT）/ 0.2.x 装不起来 —— 已知真 bug，0.1.4 起已修**：0.1.3 及以前装到桌面版上，
-  设置页里**根本不出现「B站鱼娘」（当时的刷B站）**，DSH 只留一句 `warning: 1 entry did not activate … failed to import` ✓
+  设置页里**根本不出现这个插件**，DSH 只留一句 `warning: 1 entry did not activate … failed to import` ✓
   （根因：宿主半 import 的 `@deepseek-ai/schemastery` / `dsh-tools` 是 *optional peer*，而桌面版 profile 是
   `autoInstallPeers: false` ⇒ pnpm 永远不装；`dsh-tools` 自己还带 4 个 peer，光装它也救不回来 ✗）。
   ⇒ **遇到桌面版用户：先让他升级到 0.1.4+**（修法是：不再裸 import `@deepseek-ai/*` ——

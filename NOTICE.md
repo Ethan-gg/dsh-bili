@@ -1,37 +1,27 @@
-# 第三方代码与署名说明
+# 第三方组件与许可
 
-本插件（`dsh-bili-scroll` / **B站鱼娘**）由 **dsh-bili-scroll**（刷B站）与 **dsh-bili-whale**（养鱼）两个 MIT 项目合并而来，
-本体以 **MIT** 协议发布，正文见仓库根目录的 `LICENSE`。
+本插件（`dsh-bili-scroll` / **B站鱼娘**）本体以 **MIT** 协议发布，正文见仓库根目录的 `LICENSE`。
 
-## 内含第三方代码
+## 内置第三方组件
 
-- 目录：`vendor/bilibili-mcp/`
-- 项目：**bilibili-mcp**
-- 许可证：**MIT**，Copyright (c) 2026 AGI_Ananas
-- 完整许可见该目录下的 `LICENSE`
-
-- 目录：`vendor/qrcode/`
-- 项目：**qrcode-svg**（MIT，纯 JS、零依赖）—— 用来在**不装 Python** 的机器上画登录二维码
-  - 上游：https://github.com/papnkukn/qrcode-svg（`lib/qrcode.js`；其中 QR 编码算法来自
-    Kazuhiko Arase 的 *QRCode for JavaScript*，同样是 MIT）
+- `vendor/bilibili-mcp/` —— **bilibili-mcp**（**MIT**，Copyright (c) 2026 AGI_Ananas）
+  - 内置的 Python MCP 服务；完整许可见该目录下的 `LICENSE`
+- `vendor/qrcode/` —— **qrcode-svg**（**MIT**，纯 JS、零依赖）—— 用来在**不装 Python** 的机器上画登录二维码
+  - 其中 QR 编码算法来自 Kazuhiko Arase 的 *QRCode for JavaScript*（同样是 MIT）
   - 存放为 `qrcode.cjs`：本包是 ESM，vendor 的 CJS 用 `.cjs` 才不会被 Node 当成 ESM
-- 完整许可见该目录下的 `LICENSE`
+  - 完整许可见该目录下的 `LICENSE`
 
-## 移植自其他 MIT 项目的部分（2.1 起）
+## 参考资料
 
-2.1 开始，本项目吸收 [`dsh-bili-whale`](https://github.com/Alterssss/dsh-bili-whale)（**MIT**）的部分设计与代码：
+部分模块（生物钟 / 分享闸门 / 通知后端 / 运行时定位）在实现时参考了开源项目
+[`dsh-bili-whale`](https://github.com/Alterssss/dsh-bili-whale)（**MIT**）的公开实现。
+按 MIT 许可要求，该项目的版权声明随本仓库保留在此：**Copyright (c) dsh-bili-whale 作者，MIT License**。
+本项目其余代码为本项目原创。
 
-- `tools/lib/night-plan.mjs`（生物钟计划器）→ 计划迁入 `src/host/clock.mjs`
-- `tools/lib/share-policy.mjs`（分享闸门）→ 计划迁入 `src/host/gate.mjs`
-- `tools/commands/notify.mjs`（七种通知后端）→ 计划迁入 `src/host/notify.mjs`
-- `tools/lib/runtime.mjs`（Electron 里找真 node）→ 计划迁入 `src/lib/node-runtime.mjs`
-
-迁移时会保留原文件的 MIT 版权声明；两份项目都是 MIT，允许改、再发、商用。
-
-## 关于版权署名
+## 关于版权
 
 `LICENSE` 第一行写的是 `Copyright (c) 2026 c1overzz`。
-如果你要基于本仓库做二次分发，保留这一行和 MIT 正文即可，不必另行取得授权（MIT 本身就允许改、再发、商用）。
+二次分发时保留这一行与 MIT 正文即可，不必另行取得授权（MIT 本身就允许改、再发、商用）。
 
 ---
 *本文件只是说明，不构成额外限制。*
