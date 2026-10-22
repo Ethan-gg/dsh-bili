@@ -1,6 +1,7 @@
 # 第三方代码与署名说明
 
-本插件（`dsh-bili-scroll` / 刷B站）本体以 **MIT** 协议发布，正文见仓库根目录的 `LICENSE`。
+本插件（`dsh-bili-scroll` / **B站鱼娘**）由 **dsh-bili-scroll**（刷B站）与 **dsh-bili-whale**（养鱼）两个 MIT 项目合并而来，
+本体以 **MIT** 协议发布，正文见仓库根目录的 `LICENSE`。
 
 ## 内含第三方代码
 

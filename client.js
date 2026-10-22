@@ -12,7 +12,7 @@
  *
  *     const slots = ctx.get('slots')
  *     slots.inject('settings.section', () => slots.register(
- *       { name: 'settings.section', id: 'bili-scroll', order: 30, label: '刷B站' },   // label = 左侧导航那一项
+ *       { name: 'settings.section', id: 'bili-scroll', order: 30, label: 'B站鱼娘' },   // label = 左侧导航那一项
  *       () => h(Panel),
  *     ))
  *
@@ -1032,7 +1032,7 @@ function WatchTab() {
         const slots = (typeof ctx.get === 'function' ? ctx.get('slots') : undefined) || ctx.slots
         if (!slots) return
         slots.inject('settings.section', () => slots.register(
-          { name: 'settings.section', id: 'bili-scroll', order: 30, label: '刷B站' },
+          { name: 'settings.section', id: 'bili-scroll', order: 30, label: 'B站鱼娘' },
           () => h(Panel),
         ))
 

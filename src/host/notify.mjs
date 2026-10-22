@@ -177,6 +177,6 @@ export async function sendNotify(config = {}, { title = '通知', text = '' } = 
 
 /** 设置页「发条测试」用：真发一条，然后把结果原样带回去给人看 */
 export const TEST_MESSAGE = () => ({
-  title: '刷B站 · 通知测试',
+  title: 'B站鱼娘 · 通知测试',
   text: `这是一条测试消息 ✓\n如果你看到它，说明「消息推送」配好了。\n（${new Date().toLocaleString('zh-CN', { hour12: false })}）`,
 })

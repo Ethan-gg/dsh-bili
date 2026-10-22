@@ -672,11 +672,11 @@ function reportMeta() {
 
   tool({
     name: 'bili_whoami',
-    description: '看 B站 那边登录的是谁（凭证是否有效、昵称、mid）。第一次用要先在「刷B站」设置页里扫码登录。',
+    description: '看 B站 那边登录的是谁（凭证是否有效、昵称、mid）。第一次用要先在「B站鱼娘」设置页里扫码登录。',
     parameters: {},
     async execute() {
       if (!hasCredential()) {
-        return { ok: false, loggedIn: false, hint: '还没登录：去 dsh 设置页的「刷B站」里点「扫码登录」（凭证会存在插件自己的家目录里）' }
+        return { ok: false, loggedIn: false, hint: '还没登录：去 dsh 设置页的「B站鱼娘」里点「扫码登录」（凭证会存在插件自己的家目录里）' }
       }
       const r = await readCall('bili_check_credential', {})
       return { ok: true, ...(typeof r === 'object' ? r : { raw: r }) }
@@ -839,7 +839,7 @@ function reportMeta() {
         const d = todayDigest(memoryDir)
         lines.push('', '【给主人的】' + d.owner, '【给自己的】' + d.self)
       }
-      const r = await sendNotify(cfgN, { title: `刷B站 · ${day}`, text: lines.join('\n') })
+      const r = await sendNotify(cfgN, { title: `B站鱼娘 · ${day}`, text: lines.join('\n') })
       if (!r.ok) log(`推送没发出去（${r.backend}）：${r.error ?? '未知原因'}`)
     } catch (e) {
       log('推送摘要出错（已兜住，不影响这一轮）：' + String(e?.message ?? e))
@@ -1262,7 +1262,7 @@ function reportMeta() {
         ok: true, key, url, png, source,
         hint: png
           ? '用 present 把这张 PNG 推给本人扫（手机上确认时选「记住我 / 长期」）；扫完调 bili_login_poll'
-          : '没画出二维码：让本人直接打开设置页「刷B站」点「扫码登录」，或把诊断信息发给作者',
+          : '没画出二维码：让本人直接打开设置页「B站鱼娘」点「扫码登录」，或把诊断信息发给作者',
       }
     },
   })
@@ -1285,7 +1285,7 @@ function reportMeta() {
 
   tool({
     name: 'bili_setup',
-    description: '给刷B站装运行环境：在插件家目录建一个**独立 venv**、装上那个 Python MCP 的依赖，装完自动把 `pythonPath` 指过去。\n'
+    description: '给B站鱼娘装运行环境：在插件家目录建一个**独立 venv**、装上那个 Python MCP 的依赖，装完自动把 `pythonPath` 指过去。\n'
       + '**第一次用之前跑一次**。⭐ 它**起完就返回、不等装完**（几分钟的活），进度看家目录里的 `install.log`。',
     parameters: {},
     async execute() { return runInstall() },
@@ -1293,7 +1293,7 @@ function reportMeta() {
 
   tool({
     name: 'bili_config',
-    description: '读 / 改「刷B站」的设置。不给 `patch` 就是读；给了就改（只认 schema 里的字段）。\n'
+    description: '读 / 改「B站鱼娘」的设置。不给 `patch` 就是读；给了就改（只认 schema 里的字段）。\n'
       + '例：`{"perDay":5,"peakValley":true,"noon":true,"night":true,"autoComment":false,"transcribe":false,"keywords":["DeepSeek Harness"]}`；'
       + '私信投递：`{"dmMode":"only","dmUid":12345678}`（dmMode = off / only / both）。',
     parameters: { patch: { type: 'object', additionalProperties: true, description: '要改的字段（可省）' } },
@@ -1805,7 +1805,7 @@ function reportMeta() {
       let tail = ''
       try { tail = readFileSync(logFile, 'utf8').slice(-1500) } catch { /* 读不到就算了 */ }
       writeFileSync(f, [
-        `# 刷B站 · ${dayKey()} —— 这一轮没写出报告`,
+        `# B站鱼娘 · ${dayKey()} —— 这一轮没写出报告`,
         '',
         `> ⚠️ 那一轮结束了，但没有生成正常报告（退出码 ${code}）。`,
         '> 常见原因是它卡在某个工具上反复重试、或者把预算烧完了。下一轮它会重来。',
@@ -1832,7 +1832,7 @@ function reportMeta() {
     dutyBusy = null                                   // ⭐ 先放锁：后面的收尾再慢，也不该挡住下一轮
     try { if (stopWatchdog) stopWatchdog() } catch { /* 已经在收尾了 */ }
     stopWatchdog = null
-    try { log(`刷B站结束（${why} · ${via}，code=${code}）`) } catch { /* 日志写不进去也不能抛 */ }
+    try { log(`B站鱼娘结束（${why} · ${via}，code=${code}）`) } catch { /* 日志写不进去也不能抛 */ }
     try { stubReportIfMissing(code) } catch { /* 补不上也不影响后面 */ }
     // ⭐ 2026-10-20：这一轮跑成了、并且使用者选了收藏夹 ⇒ 把挑中的存进去（后台做，别拖住收尾）
     if (code === 0 && Number(cfg.favFolderId) > 0) {
@@ -1881,7 +1881,7 @@ function reportMeta() {
     if (wantSession && hasSession(sessionController())) {
       const cwd = stateDir
       const text = promptWithCard()
-      log(`刷B站开跑（${why}）：常驻会话 mode=queue  cwd=${cwd}`)
+      log(`B站鱼娘开跑（${why}）：常驻会话 mode=queue  cwd=${cwd}`)
       dutyBusy = why
       stopWatchdog = createWatchdog({
         ms: ROUND_TIMEOUT_MS,
@@ -1920,7 +1920,7 @@ function reportMeta() {
     //      它写不了家目录里的 out/ 报告、整轮卡在"我是被沙箱关着的"上面打转 ✗；
     //      现在改成"设定由插件读进来、内联进提示词" ✓，cwd 回到插件家 ✓）
     const cwd = stateDir
-    log(`刷B站开跑（${why}）：${dsh.command} ${args.slice(0, 3).join(' ')} …  cwd=${cwd}`)
+    log(`B站鱼娘开跑（${why}）：${dsh.command} ${args.slice(0, 3).join(' ')} …  cwd=${cwd}`)
     dutyBusy = why            // 从这里开始算"在跑"，到 child exit / error 才放（见下）
     const child = spawn(dsh.command, args, {
       cwd,
@@ -1960,12 +1960,12 @@ function reportMeta() {
     child.on('error', (e) => {
       dutyBusy = null                                   // spawn 失败也要放锁，否则永远卡在"在跑"
       try { if (overlay) rmSync(overlay, { force: true }) } catch { /* 同上 */ }
-      log(`刷B站起不来：${e?.message ?? e}`)
+      log(`B站鱼娘起不来：${e?.message ?? e}`)
     })
     return { started: true, why, profile: cfg.headlessProfile, cwd, log: logFile }
    } catch (e) {
     dutyBusy = null                                     // 同步抛错（路径不对之类）同样不许留锁
-    log(`刷B站开跑失败（${why}）：${e?.stack ?? e}`)
+    log(`B站鱼娘开跑失败（${why}）：${e?.stack ?? e}`)
     return { started: false, why, error: String(e?.message ?? e) }
    }
   }
@@ -2287,7 +2287,7 @@ function reportMeta() {
   try {
     if (!existsSync(seenFile)) {
       writeFileSync(seenFile, [
-        '# 刷B站 · 判重表（宿主预建，那一轮只往后面追加）',
+        '# B站鱼娘 · 判重表（宿主预建，那一轮只往后面追加）',
         '',
         '## 评论记录（BV | rpid | root（楼中楼才填） | 时间 | 正文前 20 字）',
         '',
@@ -2708,7 +2708,7 @@ function reportMeta() {
           const out = join(notesDir, bvid + '-' + day + '.md')
           if (existsSync(out)) continue
           const head = '# ' + title + '\n\n'
-            + '> 来自「刷B站」' + day + ' 的那一轮 · ' + bvid
+            + '> 来自「B站鱼娘」' + day + ' 的那一轮 · ' + bvid
             + ' · https://www.bilibili.com/video/' + bvid + '\n'
             + '> 这一份是**单条笔记**（整天的日报在 ' + file + '）\n\n---\n\n'
           writeFileSync(out, head + b.replace(/^###\s*BV[0-9A-Za-z]+/, '').trim() + '\n', 'utf8')
@@ -2805,7 +2805,7 @@ function reportMeta() {
       if (!b) return sendJson(res, 200, { ok: false, error: '云桥没开（设置页「高级」→ 云桥）' })
       const c = syncCfg()
       const conv = Array.isArray(c.conversations) && c.conversations.length ? c.conversations[0] : ''
-      const r = await b.emit(TYPES.MSG_OUT, { convId: conv, text: '刷B站：云桥测试消息（收到就说明出站通了）' })
+      const r = await b.emit(TYPES.MSG_OUT, { convId: conv, text: 'B站鱼娘：云桥测试消息（收到就说明出站通了）' })
       log(`云桥测试（${c.transport || 'file'}）：${r?.ok ? '已发出' : '失败 ' + (r?.error ?? '')}`)
       return sendJson(res, 200, {
         ok: Boolean(r?.ok),
@@ -3008,7 +3008,7 @@ function reportMeta() {
         return JSON.stringify(c, null, 2)
       })()
       return [
-        '=== 刷B站 诊断信息 ===',
+        '=== B站鱼娘 诊断信息 ===',
         '版本：' + myVersion(),
         '平台：' + process.platform + ' ' + process.arch + ' · node ' + process.versions.node + (process.versions.electron ? ' · electron ' + process.versions.electron : ''),
         'dsh：' + (() => { try { const d = resolveDsh(); return d.missing ? '没找到（' + d.hint + '）' : d.command + ' ' + d.args.join(' ') } catch (e) { return '探测失败：' + e?.message } })(),

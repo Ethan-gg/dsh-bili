@@ -1,7 +1,7 @@
 {
   "name": "dsh-bili-scroll",
   "version": "2.1.0-dev.0",
-  "description": "DSH 插件：每天替你刷一轮 B站 —— 读字幕挑出值得的、写一份日报，值得的就 @ 你",
+  "description": "B站鱼娘（dsh-bili-scroll）：每天替你刷一轮 B站 —— 读字幕/弹幕挑出值得的、写一份日报，值得的会 @ 你；刷B站与养鱼两个项目合并后的新项目",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -30,6 +30,7 @@
     "cordis.patch.yml",
     "lib",
     "src",
+    "cloud",
     "prompts",
     "vendor",
     "README.md",

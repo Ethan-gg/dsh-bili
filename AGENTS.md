@@ -1,6 +1,6 @@
 # 给 AI 助手看的（本仓库 = 一个 DSH 插件）
 
-`dsh-bili-scroll`（中文名「**刷B站**」）：每天替用户刷一轮 B 站 —— 搜、**读字幕原文**判断、写一份日报，特别值得的会发一条评论 **@ 用户**。
+`dsh-bili-scroll`（中文名「**B站鱼娘**」；由「刷B站」（dsh-bili-scroll）与「养鱼」（dsh-bili-whale）两个项目合并而成的新项目）：每天替用户刷一轮 B 站 —— 搜、**读字幕原文**判断、写一份日报，特别值得的会发一条评论 **@ 用户**。
 
 ## 帮用户安装时，按这个顺序
 
@@ -17,14 +17,14 @@
      说明装的还是 **0.1.0** —— 那一版建 Python 环境时缺一个参数，**依赖装不上、二维码也画不出来**。
      让用户重跑一次上面那条 `add` 就是升级（然后再重启一次）。
 3. ⚠️ **提醒用户重启一次 dsh**（必须，bundle 层要重启才组装）。
-4. 让用户进 **设置 → 刷B站**：点「**装主依赖**」→ 点「**扫码登录**」（手机扫码，选"记住我 / 长期"）。
+4. 让用户进 **设置 → B站鱼娘**：点「**装主依赖**」→ 点「**扫码登录**」（手机扫码，选"记住我 / 长期"）。
    · 装完可以用设置页的「**测一下**」自检：它真跑一次登录检查 + 一次搜索，直接回答"能不能用"。
 5. **别擅自打开「自动评论并 @ 你」** —— 那是拿用户的号说话；要用得让用户自己填「要 @ 谁」。
 
 ## ⚠️ 已知环境差异（有用户反馈）
 
 - ⭐⭐ **桌面版 DSH（NEXT）/ 0.2.x 装不起来 —— 已知真 bug，0.1.4 起已修**：0.1.3 及以前装到桌面版上，
-  设置页里**根本不出现「刷B站」**，DSH 只留一句 `warning: 1 entry did not activate … failed to import` ✓
+  设置页里**根本不出现「B站鱼娘」（当时的刷B站）**，DSH 只留一句 `warning: 1 entry did not activate … failed to import` ✓
   （根因：宿主半 import 的 `@deepseek-ai/schemastery` / `dsh-tools` 是 *optional peer*，而桌面版 profile 是
   `autoInstallPeers: false` ⇒ pnpm 永远不装；`dsh-tools` 自己还带 4 个 peer，光装它也救不回来 ✗）。
   ⇒ **遇到桌面版用户：先让他升级到 0.1.4+**（修法是：不再裸 import `@deepseek-ai/*` ——
@@ -42,10 +42,11 @@
 
 ## 仓库结构（改代码时看这里）
 
-- `index.js` —— host 半端：11 个工具 + 谷时定时器 + HTTP 接口 + 配置（`config.json` 与 DSH 原生设置页**逐字段对账**：见 `loadCfg` / `saveCfgHost`）+ 值班轮的工具白名单（`mcpWhitelist` → `BILI_MCP_TOOLS`）
-- `client.js` —— 浏览器半端：设置页（注册在 `settings.section`）
+- `index.js` —— host 半端：**20+ 个工具**（B站 / 宿主 / 云桥）+ 谷时定时器 + HTTP 接口（含云桥入站）+ 配置（`config.json` 与 DSH 原生设置页**逐字段对账**：见 `loadCfg` / `saveCfgHost`）+ 值班轮的工具白名单（`mcpWhitelist` → `BILI_MCP_TOOLS`）
+- `client.js` —— 浏览器半端：设置页（注册在 `settings.section`，左侧导航叫「B站鱼娘」）
 - `lib/` —— 状态目录与家目录 / 极小的 MCP stdio 客户端 / 扫码登录 / **`hostdeps.mjs`（从宿主树取 `@deepseek-ai/*`，拿不到就退到自己依赖 / 本地等价实现）** / **`verify.mjs`（评论发出后复核）**
-- `src/` —— **2.1 起的新代码**：`src/lib/`（`paths` 路径唯一出处 / `config` 统一配置 / `migrate` 搬迁器 / `home` 启动时准备好家）、`src/sync/`（云桥协议 v1，`contract.md` 是给将来写云端的人看的）
+- `src/` —— **2.1 起的新代码**：`src/lib/`（`paths` 路径唯一出处 / `config` 统一配置 / `migrate` 搬迁器 / `home` 启动时准备好家）、`src/bili/`（**Node 能力层**：search / subtitle / comments / reply / dm / danmaku / frames，失败自动退回 MCP）、`src/host/`（卡 / 日记 / 闸门 / 审核 / 通知 / 唤醒）、`src/sync/`（云桥协议 v1，`contract.md` 是给将来写云端的人看的）
+- `cloud/` —— 云桥的**参考云端**（协议 v1：收签名事件 / 推入站 / 排障；零依赖，见 `cloud/README.md`）
 - `test/` —— `node --test "test/*.test.mjs"`（注意要带 glob：直接传目录在 Windows 上会被当成模块名）
 - `prompts/duty.md` —— 一轮要做的事（判定口径 + 红线，**用户可以改**）；升级规矩见 `lib/state.mjs` 的 `ensureCharter`（用户改过 ⇒ 保留他那份、新版落 `duty.md.new`）
 - `vendor/bilibili-mcp/` —— 内置的 Python MCP（MIT，AGI_Ananas）
