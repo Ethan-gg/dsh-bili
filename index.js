@@ -2799,6 +2799,23 @@ function reportMeta() {
       })
     }
 
+    // 「发一条测试」：真发一条，把结果原样回给设置页 —— 配 dshim / http 时当场能看见通不通
+    if (req.method === 'POST' && path === '/api/bili-duty/sync/test') {
+      const b = syncBridge()
+      if (!b) return sendJson(res, 200, { ok: false, error: '云桥没开（设置页「高级」→ 云桥）' })
+      const c = syncCfg()
+      const conv = Array.isArray(c.conversations) && c.conversations.length ? c.conversations[0] : ''
+      const r = await b.emit(TYPES.MSG_OUT, { convId: conv, text: '刷B站：云桥测试消息（收到就说明出站通了）' })
+      log(`云桥测试（${c.transport || 'file'}）：${r?.ok ? '已发出' : '失败 ' + (r?.error ?? '')}`)
+      return sendJson(res, 200, {
+        ok: Boolean(r?.ok),
+        transport: c.transport || 'file',
+        skipped: Boolean(r?.skipped),
+        error: r?.error ?? null,
+        eventId: r?.event?.id ?? null,
+      })
+    }
+
     if (req.method === 'POST' && path === '/api/bili-duty/notify-test') {
       // 「发条测试」：**真发一条**，把结果原样回给设置页 —— 配错了当场能看见，不用等下一轮
       const r = await sendNotify(notifyCfg(), TEST_MESSAGE())

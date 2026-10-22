@@ -356,6 +356,17 @@ function WatchTab() {
         finally { setBusy('') }
       }
 
+      /** 云桥：真发一条测试消息（dshim 配好后点它，当场知道通不通） */
+      const onSyncTest = async () => {
+        setBusy('synctest')
+        try {
+          const r = await jpost('/sync/test')
+          if (r?.ok) say(`云桥测试：已通过 ${r.transport} 发出${r.eventId ? '（' + r.eventId.slice(0, 12) + '…）' : ''}`, 'good')
+          else say('云桥测试失败：' + (r?.error || '看 duty.log'), 'warn')
+        } catch (e) { say('云桥测试失败：' + String(e?.message ?? e), 'warn') }
+        finally { setBusy('') }
+      }
+
       // 「它刷过的视频」：点开才读，读一次就留着（不会每 5 秒重拉）
     const WATCH_PAGE = 30
     const onLoadWatched = async (st, tr, off) => {
@@ -936,6 +947,7 @@ function WatchTab() {
           }),
           h('div', { 'data-bd-row': '' },
             h('button', { 'data-bd-btn': '', disabled: busy === 'syncinfo', onClick: onSyncInfo }, '显示密钥 / 入站地址'),
+            h('button', { 'data-bd-btn': '', disabled: busy === 'synctest', onClick: onSyncTest }, '发一条测试'),
             h('div', { 'data-bd-note': '' },
               st?.sync?.enabled
                 ? `已开：${st.sync.transport || 'file'} · 已发 ${st.sync.stats?.emitted ?? 0} / 收下 ${st.sync.stats?.accepted ?? 0} / 失败 ${st.sync.stats?.sendFailed ?? 0}`

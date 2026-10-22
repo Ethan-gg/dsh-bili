@@ -112,6 +112,12 @@
   **可选依赖**：没装就返回"跳过"不算错）；`http.mjs` 增加 `getText()`（非 JSON 原文，同样节流 + 熔断）；
   宿主新增工具 `bili_danmaku` / `bili_frames`，章程里写成"辅助选项、不必每条都用"。
   真机只读验证：弹幕拿到真实数据；本机没 ffmpeg ⇒ `frames` 正确降级。
+- **M4 第二刀：云端参考实现 + 云桥测试按钮**（2026-10-22）：新增 `cloud/server.mjs`（零依赖，协议 v1）——
+  收插件出站（验 HMAC、按 id 幂等、落 `data/events.jsonl`）、`POST /sync/v1/inbound` 把消息签名后推给插件、
+  `GET /sync/v1/events` 排障；`cloud/README.md` 写了怎么起、怎么模拟"群里 @ 她"。
+  设置页云桥加「发一条测试」：真发一条，当场验 dshim / http 出站通不通。
+  沙盒全链路验证：插件(http)→云端 presence；云端入站→插件验签→叫醒她→`bili_say`→云端收到 message.out；
+  白名单外不叫醒。真 IM webhook 与 dshim 真发仍待接/待验。
 
 ## 2.0.0 — 2026-10-21
 

@@ -125,6 +125,10 @@ test('M4 云桥：签名入站路由、出站事件、回群的手、配额对�
   // M4 收尾：云端的额度也要占本地额度（取严）
   assert.match(INDEX, /extraShared: remoteSharedExtra\(\)/, '闸门要算上跨端多出来的分享数')
   assert.match(INDEX, /const remoteSharedExtra = \(\) =>/, '要有一处"云端比本地多几条"的换算')
+  // M4 第二刀：云端参考实现 + 设置页「发一条测试」
+  assert.match(INDEX, /path === '\/api\/bili-duty\/sync\/test'/, '要有"发一条测试"路由')
+  assert.match(CLIENT, /jpost\('\/sync\/test'\)/, '设置页要有测试按钮')
+  assert.match(CLIENT, /发一条测试/, '按钮文案要直白')
 })
 
 

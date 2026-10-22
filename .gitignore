@@ -18,3 +18,5 @@ _ref/
 .tmp/
 coverage/
 *.tgz
+# 参考云端落盘的事件
+cloud/data/
