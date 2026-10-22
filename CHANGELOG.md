@@ -98,6 +98,9 @@
   `memory.append` 落 `memory/events.jsonl`、`persona.sync` 落 `persona.md`。
   设置页「高级」→ 云桥：开关 / 传输 / botId+targetId / endpoint / 群白名单 / 「显示密钥与入站地址」。
   默认关；云桥任何故障都不影响一轮（emit 从不 await / 从不抛）。沙盒端到端验证通过。
+- **M4 收尾：跨端配额接进分享闸门**（2026-10-22）：`evaluateShare` 新增 `extraShared`，
+  云端比本地多出来的分享数会占掉本地当天额度（取严、不重复计本地已记的）；
+  真机上云桥（file）跑了一轮，outbox 收到两本日记的 `memory.append` + `quota.state`。
 
 ## 2.0.0 — 2026-10-21
 

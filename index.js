@@ -719,6 +719,7 @@ function reportMeta() {
         reason: String(args?.reason ?? ''),
         rank: args?.rank,
         via: String(cfg.dmMode || 'off') === 'only' ? 'dm' : 'comment',
+        extraShared: remoteSharedExtra(),
       })
       if (r.ok) {
         if (r.warn) log(`闸门放行但提个醒：${r.warn}`)
@@ -867,6 +868,15 @@ function reportMeta() {
     return { day, shared, replied: 0, dmSent: 0 }
   }
   const quotaFile = join(stateDir, 'sync', 'quota.json')
+  /** 云端今天比本地多出来的分享数（取严：跨端额度一起算，但别重复计本地已记的） */
+  const remoteSharedExtra = () => {
+    try {
+      const q = JSON.parse(readFileSync(quotaFile, 'utf8'))
+      if (q?.day !== dayKey()) return 0
+      const remote = Math.max(0, Number(q.shared) || 0)
+      return Math.max(0, remote - localQuota().shared)
+    } catch { return 0 }
+  }
   const mergeQuota = (remote) => {
     try {
       const day = dayKey()

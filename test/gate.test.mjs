@@ -80,6 +80,20 @@ test('闸七：每天额度用完就拒，第二天自动恢复', () => {
   assert.equal(evaluateShare(okArgs({ share: shareCfg({ daily: 0 }) })).code, CODES.QUOTA_ZERO)
 })
 
+test('闸七（跨端）：云端多出来的分享也算进今天额度（取严，不重复计本地已记的）', () => {
+  const entries = [{ at: iso('2026-10-22T10:00:00'), share: true, bvid: BV_A, via: 'comment', kind: 'share' }]
+  // 本地 1 条 + 云端额外 2 条 = 3 = daily ⇒ 拒
+  const r = evaluateShare(okArgs({ entries, bvid: BV_B, extraShared: 2 }))
+  assert.equal(r.code, CODES.DAILY_LIMIT)
+  assert.deepEqual({ shared: r.shared, daily: r.daily }, { shared: 3, daily: 3 })
+  assert.equal(r.localShared, 1)
+  assert.equal(r.remote, 2)
+  // 云端额外 1 条 ⇒ 放行，但 remaining 要扣掉
+  const allow = evaluateShare(okArgs({ entries, bvid: BV_B, extraShared: 1 }))
+  assert.equal(allow.ok, true)
+  assert.equal(allow.remaining, 1)
+})
+
 test('闸八：沉默衰减 —— 3 天开始降、7 天归零', () => {
   const warn = evaluateShare(okArgs({ feedback: { lastAt: iso('2026-10-19T12:00:00') } }))   // 3 天前
   assert.equal(warn.ok, true)

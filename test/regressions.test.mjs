@@ -115,6 +115,9 @@ test('M4 云桥：签名入站路由、出站事件、回群的手、配额对�
   assert.match(INDEX, /emitSync\(TYPES\.MEMORY/, '写日记要同步记忆')
   assert.match(INDEX, /getDshIm: \(\) =>/, 'dshim 出站要运行时取宿主服务（不能写进 inject）')
   assert.match(INDEX, /syncEnabled: false/, '云桥默认关（不该在用户不知情时开）')
+  // M4 收尾：云端的额度也要占本地额度（取严）
+  assert.match(INDEX, /extraShared: remoteSharedExtra\(\)/, '闸门要算上跨端多出来的分享数')
+  assert.match(INDEX, /const remoteSharedExtra = \(\) =>/, '要有一处"云端比本地多几条"的换算')
 })
 
 

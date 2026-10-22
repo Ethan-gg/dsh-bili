@@ -143,10 +143,11 @@ export function silenceDays(feedback, now = Date.now()) {
  * @param {string} p.reason     为什么值得（≥8 字）
  * @param {number} [p.rank]     1 表示"本轮第一"
  * @param {string} [p.via]      comment | dm
+ * @param {number} [p.extraShared] 今天在**其它端**已经分享过的条数（云桥对账，取严；默认 0）
  */
 export function evaluateShare({
   share = {}, entries = [], feedback = null, now = Date.now(),
-  bvid, score, reason, rank, via = 'comment',
+  bvid, score, reason, rank, via = 'comment', extraShared = 0,
 } = {}) {
   const deny = (code, message, extra = {}) => ({ ok: false, code, message, via, ...extra })
   const allow = (extra = {}) => ({ ok: true, code: null, message: '', via, ...extra })
@@ -180,11 +181,15 @@ export function evaluateShare({
     }
   }
 
-  // ⑦ 当天额度
+  // ⑦ 当天额度（本地账本 + 云端对账多出来的那部分，取严）
   const daily = Number.isFinite(Number(share.daily)) ? Number(share.daily) : 3
   if (daily <= 0) return deny(CODES.QUOTA_ZERO, '每天允许分享的条数是 0（设置里改成 ≥1 才会发）')
   const t = tally(entries, now)
-  if (t.shared >= daily) return deny(CODES.DAILY_LIMIT, `今天已经说过 ${t.shared} 条，额度 ${daily} 条用完了`, { shared: t.shared, daily })
+  const remote = Math.max(0, Math.floor(Number(extraShared) || 0))
+  const used = t.shared + remote
+  if (used >= daily) {
+    return deny(CODES.DAILY_LIMIT, `今天已经说过 ${used} 条（本地 ${t.shared}${remote ? ' + 跨端 ' + remote : ''}），额度 ${daily} 条用完了`, { shared: used, localShared: t.shared, remote, daily })
+  }
 
   // ⑧ 沉默衰减：不是"惩罚"，是"你没反应，我就少说点"
   const quiet = silenceDays(feedback, now)
@@ -194,10 +199,10 @@ export function evaluateShare({
     return deny(CODES.SILENCE_STOP, `你已经 ${quiet} 天没有过任何反应 —— 按设置先不分享了（日记照写）`, { silentDays: quiet })
   }
   if (quiet !== null && quiet >= lowAfter) {
-    return allow({ warn: `你已经 ${quiet} 天没反应了，我少说一点`, silentDays: quiet, remaining: daily - t.shared })
+    return allow({ warn: `你已经 ${quiet} 天没反应了，我少说一点`, silentDays: quiet, remaining: daily - used })
   }
 
-  return allow({ remaining: daily - t.shared })
+  return allow({ remaining: daily - used })
 }
 
 /**
