@@ -157,6 +157,27 @@ test('capability：只认 node / python，写错回默认 node（M2 能力层开
   assert.equal(clamp({}).run.capability, 'node', '默认必须是 node —— 干净机器（没 Python）也能跑')
 })
 
+test('sync 扁平视图往返（M4 设置页用）：开关 / 传输 / botId / 目标 / 云端地址 / 群白名单', () => {
+  const cfg = applyFlat(DEFAULTS, {
+    syncEnabled: true,
+    syncTransport: 'dshim',
+    syncBotId: 'bot_x',
+    syncTargetId: 'daily-report',
+    syncEndpoint: 'https://cloud.example',
+    syncConversations: 'c1，c2',
+  })
+  assert.equal(cfg.sync.enabled, true)
+  assert.equal(cfg.sync.transport, 'dshim')
+  assert.equal(cfg.sync.botId, 'bot_x')
+  assert.equal(cfg.sync.targetId, 'daily-report')
+  assert.equal(cfg.sync.endpoint, 'https://cloud.example')
+  assert.deepEqual(cfg.sync.conversations, ['c1', 'c2'], '中英文逗号都认')
+  const flat = flatView(cfg)
+  assert.equal(flat.syncEnabled, true)
+  assert.equal(flat.syncConversations, 'c1,c2')
+  assert.equal(flat.syncTransport, 'dshim')
+})
+
 test('applyFlat：只改传进来的那几个键，其余不动', () => {
   const base = clamp({ feed: { perDay: 9 }, account: { mentionName: '甲' } })
   const next = applyFlat(base, { perDay: 3 })

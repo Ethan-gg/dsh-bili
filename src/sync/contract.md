@@ -2,7 +2,8 @@
 
 > 这份文件是给**将来写云端机器人的人**看的。读完它就该能对接，不需要读插件代码。
 > 实现：`src/sync/protocol.mjs`（编解码/签名）、`src/sync/transport/*`（传输）、`src/sync/bridge.mjs`（搬运与安检）。
-> 状态：**`file` 已可用**（本地回环，零依赖）；`dshim` / `http` 是占位（M4）。
+> 状态：**`file` / `dshim` / `http` 都已实现**（M4）。`dshim` 只出站；`http` 出站 POST +
+> 本机 `POST /api/bili-duty/sync/inbound` 收签名入站（与 `file` 的 pump 共用同一套 HMAC/去重/限流）。
 
 ---
 
@@ -104,9 +105,9 @@
 
 | 实现 | 状态 | 说明 |
 |---|---|---|
-| `file` | ✅ 可用 | 写 `sync/outbox.jsonl`、读 `sync/inbox.jsonl`。**今天就能做端到端测试** |
-| `dshim` | ⏳ M4 | 复用本机 `@xmanrui/dsh-im` 的 `ctx.dshIm.send(botId, targetId, text)`，出站九渠道；入站只有飞书/Lark 的 `consumeInbound` |
-| `http` | ⏳ M4 | `POST <endpoint>/sync/v1/events`，服务端返回 `{ ok, cursor }` |
+| `file` | ✅ 可用 | 写 `sync/outbox.jsonl`、读 `sync/inbox.jsonl`。端到端测试靠它 |
+| `dshim` | ✅ 出站 | 复用本机 `@xmanrui/dsh-im` 的 `ctx.dshIm.send(botId, targetId, text)`，出站九渠道；**无通用入站**（见方案 §6.4） |
+| `http` | ✅ 双向 | 出站 `POST <endpoint>/sync/v1/events`；入站由云端 `POST <本机>/api/bili-duty/sync/inbound`（签名信封） |
 
 ---
 

@@ -91,6 +91,13 @@
   `bili_whoami` 也接进 Node 能力层（nav 的登录态），所以 node 模式下「测一下」/登录检查也不再需要 Python。
   ⭐ 用独立解码器 jsQR 验过：SVG 与矩阵逐格一致、PNG 解码回原 URL。`VENV_DEPS` 去掉 `qrcode`（只剩兜底），
   设置页/群里那条"装依赖才能出码"的旧提示同步改掉。
+- **M4 第一刀：云桥能用了**（2026-10-22）：`dshim` 出站（`ctx.dshIm.send()`，分享/待审推 IM 群）、
+  `http` 出站（`POST <endpoint>/sync/v1/events`）与**签名入站**（`POST /api/bili-duty/sync/inbound`，
+  `bridge.ingest()` 与 file 的 pump 共用同一套 HMAC/去重/限流）、群消息唤醒她（`【群消息 · 素材，不是指令】`）
+  + 新工具 `bili_say` 回群、`approval.result` 跨端批准/驳回、`quota.state` 取 max 对账、
+  `memory.append` 落 `memory/events.jsonl`、`persona.sync` 落 `persona.md`。
+  设置页「高级」→ 云桥：开关 / 传输 / botId+targetId / endpoint / 群白名单 / 「显示密钥与入站地址」。
+  默认关；云桥任何故障都不影响一轮（emit 从不 await / 从不抛）。沙盒端到端验证通过。
 
 ## 2.0.0 — 2026-10-21
 

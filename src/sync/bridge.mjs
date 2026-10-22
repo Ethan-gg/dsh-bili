@@ -4,8 +4,13 @@
  * 它只管**搬运与安检**，不管"收到消息之后她要回什么" ——
  * 后者是 `onEvent` 回调（由 host 半端注进来），免得协议层学会业务。
  *
- * 一道重要的取舍：**收到坏事件时只记数，不抛异常**。
- * 云端是外部输入，抛出来就是一个让对面一条坏数据打挂本机的口子。
+ * 一道重要的取舍：**收到坏事件时只记数，不抛异常**。云端是外部输入，
+ * 抛出来就是一个让对面一条坏数据打挂本机的口子。
+ *
+ * 两种收法（M4 起）：
+ *   · `pump()` —— 拉模式：从 transport.poll() 取（file 适配器靠它；http 推模式靠下一条）
+ *   · `ingest()` —— 推模式：云端 POST 进来时，宿主校验完签名直接喂给它
+ * 两条走**同一套**校验/去重/限流/分发，别各写一份（各写一份迟早一条路漏签名）。
  * ============================================================================
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
@@ -69,10 +74,51 @@ export function createBridge({
     return true
   }
 
+  /**
+   * 一条信封的完整安检 + 分发。返回 true = 收下了。
+   * `dropped` 计数器由调用方持有（pump / ingest 各自汇总次数）。
+   */
+  async function handleOne(env, handlers, dropped) {
+    const shape = validateEnvelope(env, { now: new Date(now()), replayWindowMin })
+    if (!shape.ok) { dropped.badShape += 1; return false }
+    if (!verifySignature(env, secret)) { dropped.badSig += 1; return false }
+    if (seen[env.id]) { dropped.dup += 1; return false }
+    const convId = env?.payload?.convId ?? env?.payload?.conversationId ?? ''
+    if (!allowedByRate(convId)) { dropped.rate += 1; return false }
+    seen[env.id] = now()
+    const fn = handlers?.[env.type]
+    if (typeof fn === 'function') {
+      try { await fn(env) } catch (e) { log(`处理 ${env.type} 失败：${e?.message ?? e}`) }
+    }
+    return true
+  }
+
+  /** 把一批"已经送达本机"的事件收进来（http 推模式用这个） */
+  async function ingest(events = [], handlers = {}) {
+    secret = secret || ensureSecret(secretFile)
+    const list = Array.isArray(events) ? events : [events]
+    const dropped = { badSig: 0, badShape: 0, dup: 0, rate: 0 }
+    let accepted = 0
+    for (const env of list) {
+      stats.received += 1
+      if (await handleOne(env, handlers, dropped)) accepted += 1
+    }
+    stats.accepted += accepted
+    stats.dup += dropped.dup
+    stats.badSig += dropped.badSig
+    stats.badShape += dropped.badShape
+    stats.rateLimited += dropped.rate
+    if (accepted || dropped.dup) saveSeen()
+    return { accepted, dropped, received: list.length }
+  }
+
   return {
     get capabilities() { return transport.capabilities() },
     get cursor() { return cursor },
     status: () => ({ ...stats, cursor, hasSecret: Boolean(secret || existsSync(secretFile)) }),
+
+    /** 推模式入站（云端 POST 进来时用；与 pump 共用同一套校验/去重/限流） */
+    ingest,
 
     /** 发一条事件出去（已经签好名）。失败只记数并回 `{ok:false}`，调用方决定要不要重试。 */
     async emit(type, payload = {}, extra = {}) {
@@ -86,7 +132,7 @@ export function createBridge({
     },
 
     /**
-     * 收一轮。`handlers[type](event)` 返回什么都会被忽略（除非它抛错 → 只记日志）。
+     * 拉一轮。`handlers[type](event)` 返回什么都会被忽略（除非它抛错 → 只记日志）。
      * 调用方拿到 `{ accepted, dropped, cursor }` 就能决定下一步（比如"没新消息就继续睡"）。
      */
     async pump(handlers = {}) {
@@ -100,18 +146,7 @@ export function createBridge({
       }
       for (const env of res?.events ?? []) {
         stats.received += 1
-        const shape = validateEnvelope(env, { now: new Date(now()), replayWindowMin })
-        if (!shape.ok) { dropped.badShape += 1; continue }
-        if (!verifySignature(env, secret)) { dropped.badSig += 1; continue }
-        if (seen[env.id]) { dropped.dup += 1; continue }
-        const convId = env?.payload?.convId ?? env?.payload?.conversationId ?? ''
-        if (!allowedByRate(convId)) { dropped.rate += 1; continue }
-        seen[env.id] = now()
-        accepted += 1
-        const fn = handlers[env.type]
-        if (typeof fn === 'function') {
-          try { await fn(env) } catch (e) { log(`处理 ${env.type} 失败：${e?.message ?? e}`) }
-        }
+        if (await handleOne(env, handlers, dropped)) accepted += 1
       }
       stats.accepted += accepted
       stats.dup += dropped.dup

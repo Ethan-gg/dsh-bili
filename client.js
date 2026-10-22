@@ -242,6 +242,14 @@ function WatchTab() {
       const [persona, setPersona] = React.useState(null)   // 人设提示词草稿
       const [rl, setRl] = React.useState(null)
       const [cap, setCap] = React.useState(null)           // 能力层：node（内置只读）/ python（MCP）
+      // M4 云桥（本地草稿；改完失焦保存）
+      const [syncOn, setSyncOn] = React.useState(null)
+      const [syncTransport, setSyncTransport] = React.useState(null)
+      const [syncBotId, setSyncBotId] = React.useState(null)
+      const [syncTargetId, setSyncTargetId] = React.useState(null)
+      const [syncEndpoint, setSyncEndpoint] = React.useState(null)
+      const [syncConvs, setSyncConvs] = React.useState(null)
+      const [syncInfo, setSyncInfo] = React.useState('')
       const [newVer, setNewVer] = React.useState('')       // 发现的新版本号（空 = 没发现）          // 日报形态：full / brief / off
       // ⚠️ 输入框必须绑"本地草稿"：页面每 5 秒轮询 /status，服务端那份会把 config 盖掉
       //    ⇒ 直接绑 cfg 的话，用户打字打到一半就被冲没了 ✗（2026-10-14 陌生人验收时抓到）
@@ -286,6 +294,12 @@ function WatchTab() {
         if (cfg && persona === null) setPersona(cfg.personaPrompt || '')
         if (cfg && rl === null) setRl(cfg.reportLevel || 'full')
         if (cfg && cap === null) setCap(cfg.capability || 'node')
+        if (cfg && syncOn === null) setSyncOn(Boolean(cfg.syncEnabled))
+        if (cfg && syncTransport === null) setSyncTransport(cfg.syncTransport || 'file')
+        if (cfg && syncBotId === null) setSyncBotId(cfg.syncBotId || '')
+        if (cfg && syncTargetId === null) setSyncTargetId(cfg.syncTargetId || '')
+        if (cfg && syncEndpoint === null) setSyncEndpoint(cfg.syncEndpoint || '')
+        if (cfg && syncConvs === null) setSyncConvs(cfg.syncConversations || '')
         if (cfg && perDay === null) setPerDay(String(cfg.perDay ?? 5))
         if (cfg && perRound === null) setPerRound(String(cfg.commentPerRound ?? 1))
         if (cfg && replyPer === null) setReplyPer(String(cfg.replyPerRound ?? 1))
@@ -323,6 +337,22 @@ function WatchTab() {
           if (r?.host && r.host.ok === false) say(`${what || '设置'}：插件自己那份存了，但 DSH 设置页那份没写进去（${r.host.error}）`, 'warn')
           else say(what ? `${what}：已保存` : '已保存', 'good')
         } catch (e) { say(String(e?.message ?? e), 'warn') }
+        finally { setBusy('') }
+      }
+
+      /** 云桥：把入站地址 + 密钥亮出来（云端对接就靠这一屏） */
+      const onSyncInfo = async () => {
+        setBusy('syncinfo')
+        try {
+          const r = await jget('/sync/info?reveal=1')
+          if (!r?.ok) { say(r?.error || '读不到云桥信息', 'warn'); return }
+          const origin = (typeof location !== 'undefined' && location.origin) ? location.origin : 'http://127.0.0.1:<DSH端口>'
+          setSyncInfo(`入站地址：POST ${origin}${r.inboundPath}\n`
+            + `协议：${r.protocol}（见 src/sync/contract.md）\n`
+            + `传输：${r.transport}\n`
+            + `密钥（HMAC）：${r.secret}\n\n`
+            + '把这个地址和密钥交给云端实现方；它只需要按协议发签名事件，不需要知道 DSH / B站 内部。')
+        } catch (e) { say('读云桥信息失败：' + String(e?.message ?? e), 'warn') }
         finally { setBusy('') }
       }
 
@@ -865,6 +895,53 @@ function WatchTab() {
             h('div', { 'data-bd-note': '' }, `${watchedOffset + 1}–${Math.min(watchedOffset + WATCH_PAGE, watchedTotal)} / ${watchedTotal}`),
             h('button', { 'data-bd-btn': '', disabled: watchedOffset + WATCH_PAGE >= watchedTotal, onClick: () => onWatchPage(WATCH_PAGE) }, '下一页')) : null),
 
+        /* ── 云桥（M4）── */
+        h('div', { 'data-bd-sec': '', 'data-bd-group': 'adv', 'data-bd-away': tab === 'adv' ? undefined : '' },
+          h('div', { 'data-bd-h': '' }, '云桥：跟云端 / 群聊互通（默认关）'),
+          h(ToggleRow, {
+            label: '打开云桥',
+            note: '开了之后：分享 / 待审草稿能推到 IM 群；群里 @ 她能叫醒她回一句。没填目标就只在本机落 outbox。',
+            on: Boolean(syncOn),
+            onChange: (v) => { setSyncOn(v); patch({ syncEnabled: v }, '云桥开关') },
+          }),
+          h('div', { 'data-bd-label': '' }, '传输方式'),
+          h('select', {
+            'data-bd-input': '', value: syncTransport ?? 'file',
+            onChange: (e) => { setSyncTransport(e.target.value); patch({ syncTransport: e.target.value }, '云桥传输') },
+          },
+            h('option', { value: 'file' }, 'file —— 本地回环（写 sync/outbox.jsonl，测试用）'),
+            h('option', { value: 'dshim' }, 'dshim —— 走已装的 dsh-im 推到群 / 私聊（推荐）'),
+            h('option', { value: 'http' }, 'http —— 自己填云端地址（出站 POST + 签名入站）')),
+          (syncTransport ?? 'file') === 'dshim' ? h('div', { 'data-bd-row': '' },
+            h('input', {
+              'data-bd-input': '', placeholder: 'botId（从 dsh-im 设置页复制）', value: syncBotId ?? '',
+              onChange: (e) => setSyncBotId(e.target.value),
+              onBlur: () => patch({ syncBotId: String(syncBotId || '').trim() }, '云桥 botId'),
+            }),
+            h('input', {
+              'data-bd-input': '', placeholder: 'targetId（从 dsh-im 设置页复制）', value: syncTargetId ?? '',
+              onChange: (e) => setSyncTargetId(e.target.value),
+              onBlur: () => patch({ syncTargetId: String(syncTargetId || '').trim() }, '云桥 targetId'),
+            })) : null,
+          (syncTransport ?? 'file') === 'http' ? h('input', {
+            'data-bd-input': '', placeholder: '云端地址，例如 https://your-host', value: syncEndpoint ?? '',
+            onChange: (e) => setSyncEndpoint(e.target.value),
+            onBlur: () => patch({ syncEndpoint: String(syncEndpoint || '').trim() }, '云桥云端地址'),
+          }) : null,
+          h('div', { 'data-bd-label': '' }, '允许的群（可选，convId 逗号分隔；空 = 不额外限制）'),
+          h('input', {
+            'data-bd-input': '', placeholder: 'conv_xxx, conv_yyy', value: syncConvs ?? '',
+            onChange: (e) => setSyncConvs(e.target.value),
+            onBlur: () => patch({ syncConversations: String(syncConvs || '').trim() }, '云桥群白名单'),
+          }),
+          h('div', { 'data-bd-row': '' },
+            h('button', { 'data-bd-btn': '', disabled: busy === 'syncinfo', onClick: onSyncInfo }, '显示密钥 / 入站地址'),
+            h('div', { 'data-bd-note': '' },
+              st?.sync?.enabled
+                ? `已开：${st.sync.transport || 'file'} · 已发 ${st.sync.stats?.emitted ?? 0} / 收下 ${st.sync.stats?.accepted ?? 0} / 失败 ${st.sync.stats?.sendFailed ?? 0}`
+                : '现在关着')),
+          syncInfo ? h('pre', { 'data-bd-pre': '' }, syncInfo) : null),
+        /* ── 搜索 / 字幕 / 评论走哪边（M2）── */
         h('div', { 'data-bd-sec': '', 'data-bd-group': 'adv', 'data-bd-away': tab === 'adv' ? undefined : '' },
           h('div', { 'data-bd-h': '' }, '搜索 / 字幕 / 评论走哪边'),
           h('div', { 'data-bd-row': '' },

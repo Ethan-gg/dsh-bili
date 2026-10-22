@@ -428,6 +428,13 @@ export function flatView(cfg) {
     runMode: c.run.mode,
     /** 只读能力层走哪边：node（内置，失败退回 MCP）/ python（只用 MCP） */
     capability: c.run.capability,
+    /** 云桥（M4）：开关 / 传输 / dshim 的 botId+targetId / http 的云端地址 / 允许的群 */
+    syncEnabled: c.sync.enabled,
+    syncTransport: c.sync.transport,
+    syncBotId: c.sync.botId,
+    syncTargetId: c.sync.targetId,
+    syncEndpoint: c.sync.endpoint,
+    syncConversations: Array.isArray(c.sync.conversations) ? c.sync.conversations.join(',') : '',
   }
 }
 
@@ -473,6 +480,12 @@ export function applyFlat(cfg, patch = {}) {
   if (has('diaryPush')) c.diary.push = patch.diaryPush
   if (has('runMode')) c.run.mode = patch.runMode
   if (has('capability')) c.run.capability = patch.capability
+  if (has('syncEnabled')) c.sync.enabled = Boolean(patch.syncEnabled)
+  if (has('syncTransport')) c.sync.transport = patch.syncTransport
+  if (has('syncBotId')) c.sync.botId = patch.syncBotId
+  if (has('syncTargetId')) c.sync.targetId = patch.syncTargetId
+  if (has('syncEndpoint')) c.sync.endpoint = patch.syncEndpoint
+  if (has('syncConversations')) c.sync.conversations = String(patch.syncConversations ?? '').split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean)
   return clamp(c)
 }
 

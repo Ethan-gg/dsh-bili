@@ -220,7 +220,7 @@ test('bridge：pendingInbound 能回答"云端还有几条没读"', async () => 
 
 /* ───────────────────────── 装配 ───────────────────────── */
 
-test('createSync：没开就是 null；开了用 file 能起来；未知传输给人话错误', () => {
+test('createSync：没开就是 null；file/http/dshim 都能装配；未知传输给人话错误', () => {
   const p = tmpPaths()
   assert.equal(createSync({ paths: p, config: clamp({}), log: quiet }), null)
 
@@ -229,8 +229,20 @@ test('createSync：没开就是 null；开了用 file 能起来；未知传输�
   assert.equal(bridge.capabilities.inbound, true)
   assert.equal(bridge.capabilities.outbound, true)
 
-  const httpCfg = clamp({ sync: { enabled: true, transport: 'http' } })
-  assert.throws(() => createSync({ paths: p, config: httpCfg, log: quiet }), /M4/)
+  // M4 起：http 与 dshim 都是真实现（不再是占位报错）
+  const httpCfg = clamp({ sync: { enabled: true, transport: 'http', endpoint: 'https://cloud.example' } })
+  const httpBridge = createSync({ paths: p, config: httpCfg, log: quiet })
+  assert.equal(httpBridge.capabilities.inbound, true)
+  assert.equal(httpBridge.capabilities.outbound, true)
+
+  const dshimCfg = clamp({ sync: { enabled: true, transport: 'dshim', botId: 'b', targetId: 't' } })
+  const dshimBridge = createSync({ paths: p, config: dshimCfg, log: quiet, deps: { getDshIm: () => ({ send: async () => ({ sent: true }) }) } })
+  assert.equal(dshimBridge.capabilities.outbound, true)
+  assert.equal(dshimBridge.capabilities.inbound, false, 'dshim 没有通用入站（见方案 §6.4）')
+
+  const bad = clamp({ sync: { enabled: true, transport: 'file' } })
+  bad.sync.transport = 'carrier-pigeon'
+  assert.throws(() => createSync({ paths: p, config: bad, log: quiet }), /未知的同步方式/)
 })
 
 test('createSync：默认全关（云桥不该在用户不知情时开）', () => {

@@ -22,10 +22,13 @@ test('待审草稿：入队靠工具、发出靠人点头，宿主三个接口�
   assert.match(INDEX, /pending\/drop/, '要有否掉接口')
 
   // 批准流程的三条语义：先取走（防连点发两条）/ 失败放回（别把草稿弄丢）/ 成功才记账
+  // （2026-10-22 M4：逻辑收进 approveDraftById，设置页按钮与云桥 approval.result 共用一份）
+  assert.match(INDEX, /async function approveDraftById\(id\)/, '要有一处共用的批准逻辑')
   assert.match(INDEX, /const taken = takeDraft\(readQueue\(pendingFile\), id\)/, '先取走')
-  assert.match(INDEX, /if \(!taken\.item\) return sendJson\(res, 404/, '取不到就明确说"可能已经发过"')
+  assert.match(INDEX, /队列里没有这条（可能已经发过）/, '取不到就明确说"可能已经发过"')
   assert.match(INDEX, /const back = addDraft\(taken\.queue, item, \{\}\)/, '发失败要放回队列')
   assert.match(INDEX, /recordShare\(\{ bvid: item\.bvid, rpid: item\.parent, text: item\.message \}\)/, '成功才记账')
+  assert.match(INDEX, /await approveDraftById\(id\)/, '路由要复用同一段逻辑')
 
   // 设置页有入口
   assert.match(CLIENT, /jget\('\/pending'\)/, '设置页要能读列表')
@@ -48,7 +51,7 @@ test('待审草稿：入队靠工具、发出靠人点头，宿主三个接口�
  * 否则那个兜底跑法会去调根本不存在的工具、白烧一轮。
  */
 const MCP_TOOLS = ['bili_search', 'bili_subtitle', 'bili_comments', 'bili_video_info', 'bili_reply', 'bili_send_message']
-const HOST_ONLY_TOOLS = ['bili_diary', 'bili_draft', 'bili_done']
+const HOST_ONLY_TOOLS = ['bili_diary', 'bili_draft', 'bili_done', 'bili_say']
 
 test('提示词提宿主专属工具时，必须写清「退回一次性进程」那一轮怎么办', () => {
   const duty = readFileSync(new URL('../prompts/duty.md', import.meta.url), 'utf8')
@@ -98,6 +101,20 @@ test('M2 能力层：只读三件走 Node、可退回 MCP；写入类不搬', ()
   assert.match(INDEX, /return readCall\('bili_comments'/, 'comments 走能力层路由')
   assert.match(INDEX, /const capabilityNow = \(\) =>/, '要有一处统一的开关判断')
   assert.match(INDEX, /capability: 'node'/, '扁平 DEFAULTS 里要有 capability（干净机器默认不依赖 Python）')
+})
+
+test('M4 云桥：签名入站路由、出站事件、回群的手、配额对账都在', () => {
+  assert.match(INDEX, /path === '\/api\/bili-duty\/sync\/inbound'/, '要有签名入站路由')
+  assert.match(INDEX, /b\.ingest\(events, syncHandlers\(\)\)/, '入站要走 bridge.ingest（与 pump 同一套安检）')
+  assert.match(INDEX, /path === '\/api\/bili-duty\/sync\/info'/, '要有入站地址/密钥查询')
+  assert.match(INDEX, /name: 'bili_say'/, '她得有回群的那只手')
+  assert.match(INDEX, /TYPES\.MSG_IN/, '群里消息要能叫醒她')
+  assert.match(INDEX, /deliverToSession\(\{ sessionController: sessionController\(\), cwd: stateDir, text: material \}\)/, '入站要投进常驻会话')
+  assert.match(INDEX, /emitSync\(TYPES\.QUOTA, localQuota\(\)\)/, '一轮收尾要跟云端对账配额')
+  assert.match(INDEX, /emitSync\(TYPES\.APPROVAL_REQ/, '草稿入队要推待审')
+  assert.match(INDEX, /emitSync\(TYPES\.MEMORY/, '写日记要同步记忆')
+  assert.match(INDEX, /getDshIm: \(\) =>/, 'dshim 出站要运行时取宿主服务（不能写进 inject）')
+  assert.match(INDEX, /syncEnabled: false/, '云桥默认关（不该在用户不知情时开）')
 })
 
 
