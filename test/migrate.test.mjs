@@ -8,6 +8,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync, statSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { convertWhaleQuota, migrateIfNeeded, parseSeenTable, planMigration } from '../src/lib/migrate.mjs'
+import { fromLegacy } from '../src/lib/config.mjs'
 import { homePaths } from '../src/lib/paths.mjs'
 
 /** 造一个"装过 2.0 + 装过 whale"的假机器 */
@@ -160,6 +161,22 @@ test('migrateIfNeeded：只有 whale、没装过 scroll，也能建出一个完�
   assert.equal(cfg.notify.type, 'webhook')
   assert.equal(readFileSync(p.persona, 'utf8'), '人设')
   for (const d of [p.out, p.digest, p.ledgerDir, p.memoryDir, p.syncDir]) assert.equal(existsSync(d), true)
+})
+
+test('迁移：老配置里没写 dmMode 时，投递方式保持 2.0 的默认（只私信）', () => {
+  // 2.0 的 schema 默认是 `only`（CHANGELOG 写着"私信投递成为默认"）。
+  // 迁移只读 config.json、读不到宿主那层 schema 默认值 ⇒ 新默认必须对齐，否则升级后开始公开发评论。
+  assert.equal(fromLegacy({}, {}).config.dm.mode, 'only')
+  assert.equal(fromLegacy({ dmMode: 'off' }, {}).config.dm.mode, 'off')
+  assert.equal(fromLegacy({ dmMode: 'both' }, {}).config.dm.mode, 'both')
+})
+
+test('迁移：老配置里没写 dmWatch 时，私信监听保持 2.0 的默认（开）', () => {
+  // 2.0 的 schema/DEFAULTS 都是 true，而且 2.0 把「私信双向」当成默认功能。
+  // 新配置的默认若是 false，升级当天就会出现"以前会回我私信，现在不回了"。
+  assert.equal(fromLegacy({ perDay: 6 }, {}).config.listen.dm, true)
+  // 明确关过的要尊重
+  assert.equal(fromLegacy({ dmWatch: false }, {}).config.listen.dm, false)
 })
 
 test('migrateIfNeeded：dryRun 只算不写', () => {

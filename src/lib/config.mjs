@@ -81,7 +81,12 @@ export const DEFAULTS = {
     scope: 'both',         // both | reply
     oncePerPerson: false,
     allDay: false,
-    dm: false,
+    /**
+     * 私信监听。**默认 true** —— 这是 2.0 的行为（2.0 的 schema 与 DEFAULTS 都是 true）。
+     * 迁移时如果老配置里没写这个键，必须保持 true，否则升级当天的行为会悄悄变掉
+     * （用户会发现"以前会回我私信，现在不回了"）。冒烟测试逮到过这一处。
+     */
+    dm: true,
     dmIntervalSec: 20,
     live: false,
     liveRoom: '',
@@ -92,8 +97,16 @@ export const DEFAULTS = {
   /** 回复：只回楼中楼，默认先审后发 */
   reply: { perRound: 1, toComments: false, approval: true },
 
-  /** 私信：发给谁、回落几条 */
-  dm: { mode: 'off', uid: 0, replyPerDay: 0, ownerUid: 0 },
+  /**
+   * 私信。`mode` 默认 **`only`** —— 这是 2.0 的口径（schema 与设置页都是 only，
+   * 2.0 的 CHANGELOG 明确写着"私信投递成为默认"）。
+   *
+   * ⚠️ 为什么强调：迁移只读 `config.json`，**读不到宿主那层 schema 默认值**。
+   * 如果你的 config.json 里从没写过 dmMode，2.0 实际跑的是 `only`（来自 schema），
+   * 而我把新默认写成 `off` 的话，升级后她就会**开始发公开评论** —— 一个没人预期的行为变化。
+   * 真实数据演练时逮到的。
+   */
+  dm: { mode: 'only', uid: 0, replyPerDay: 0, ownerUid: 0 },
 
   /** 产物 */
   report: { level: 'full' },                              // full | brief | off
@@ -168,6 +181,43 @@ export function hhmm(v) {
   if (h === 24 && mi === 0) return '24:00'
   if (h > 23) return null
   return `${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}`
+}
+
+/**
+ * 把一行文本解析成作息窗口 —— `"20:00-24:00:1, 12:00-14:00:2"`。
+ *
+ * 为什么用字符串而不是 JSON 数组：DSH 原生设置页的字段只认标量（且必须 volatile），
+ * 数组/对象塞不进去；而这个值要同时在**设置页、`bili_config` 工具、config.json** 三处可改。
+ * 字符串是唯一能同时满足三者的形状，代价是要有这一对解析/格式化函数（并且**必须单测**）。
+ *
+ * 规则：
+ *   · 分隔符：逗号、中文逗号、分号、换行都行（人会怎么写就怎么认）
+ *   · 每一段：`开始-结束[:次数]`，次数省略 = 1
+ *   · `结束 <= 开始` 视为跨午夜（`23:00-02:00`）
+ *   · 认不出的段**丢掉**（不抛）—— 配置里写错一个字不该让插件起不来；丢掉几段由调用方记日志
+ */
+export function parseWindows(text) {
+  const out = []
+  const bad = []
+  for (const raw of String(text ?? '').split(/[,，;；\n]+/)) {
+    const seg = raw.trim()
+    if (!seg) continue
+    const m = /^(\d{1,2}:\d{2})\s*[-~—至]\s*(\d{1,2}:\d{2})(?:\s*[:：]\s*(\d{1,2}))?$/.exec(seg)
+    if (!m) { bad.push(seg); continue }
+    const start = hhmm(m[1])
+    const end = hhmm(m[2])
+    if (!start || !end) { bad.push(seg); continue }
+    const wakes = m[3] === undefined ? 1 : Math.min(12, Math.max(0, Number(m[3]) || 0))
+    out.push({ start, end, wakes })
+  }
+  return { windows: out, bad }
+}
+
+/** `parseWindows` 的逆（设置页展示用） */
+export function formatWindows(windows = []) {
+  return (Array.isArray(windows) ? windows : [])
+    .map((w) => `${w.start}-${w.end}:${Number(w.wakes ?? 1)}`)
+    .join(', ')
 }
 
 /** 整数夹取；非数字回落到默认 */
@@ -351,6 +401,8 @@ export function flatView(cfg) {
     replyToComments: c.reply.toComments,
     replyPerRound: c.reply.perRound,
     favFolderId: c.fav.folderId,
+    /** 作息窗口的文本形式：DSH 原生设置页只认标量，数组塞不进去 */
+    scheduleWindows: formatWindows(c.schedule.windows),
   }
 }
 
@@ -388,6 +440,8 @@ export function applyFlat(cfg, patch = {}) {
   if (has('replyToComments')) c.reply.toComments = patch.replyToComments
   if (has('replyPerRound')) c.reply.perRound = patch.replyPerRound
   if (has('favFolderId')) c.fav.folderId = patch.favFolderId
+  // 作息窗口：文本 ⇄ 数组。认不出的段在这里被丢掉（写错了不该让插件起不来）
+  if (has('scheduleWindows')) c.schedule.windows = parseWindows(patch.scheduleWindows).windows.slice(0, 6)
   return clamp(c)
 }
 

@@ -41,6 +41,18 @@ test('定时那一跳先看跑成没跑成，再消费窗口（否则被拒一�
   assert.match(INDEX, /if \(r && r\.busy\) return\s*\/\/ 留给下一跳/, '被拒时不许把窗口标记成用过了')
 })
 
+test('生物钟接在 tick 上，且没配窗口时走老路（升级当天行为不变）', () => {
+  assert.match(INDEX, /const schedule = clockSchedule\(\)/, 'tick 里要先算作息窗口')
+  assert.match(INDEX, /if \(schedule\) \{ tickClock\(schedule, now\); return \}/, '配了就走生物钟，否则继续老谷时逻辑')
+  assert.match(INDEX, /return windows\.length \? \{ windows, minGapMin: 10, skipChance: 0\.3 \} : null/, '空窗口必须返回 null')
+  // 定时器里抛异常会带走整个宿主（10-14 的事故），所以这一跳必须自己兜
+  assert.match(INDEX, /const tickClock = \(schedule, now\) => \{\s*try \{/, 'tickClock 要自己 try')
+  // 计划要先落盘再唤醒；"不看"也要记掉这次机会
+  assert.match(INDEX, /if \(JSON\.stringify\(plan\) !== JSON\.stringify\(st\)\) writeJson\(CLOCK_FILE, plan\)/, '计划要持久化')
+  assert.match(INDEX, /if \(plan\.action === 'skip'\)/, '跳过要单独处理')
+  assert.match(INDEX, /if \(!r \|\| !r\.started\) return\s*\/\/ 没起来就别记账/, '没跑起来不许记账')
+})
+
 test('闸门接在 bili_reply 上，且**没传 score 时不判**（老提示词零影响）', () => {
   assert.match(INDEX, /const gateShare = \(args\) => \{/, '要有闸门入口')
   assert.match(INDEX, /if \(args\?\.score === undefined \|\| args\?\.score === null/, '没传评分直接放行')

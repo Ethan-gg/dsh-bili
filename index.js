@@ -35,8 +35,9 @@ import { loginStart, loginPoll, saveCredential, renderQrPng } from './lib/login.
 import { resolveUid } from './lib/uid.mjs'
 import { loadCred as dmCred, listSessions as dmList, fetchMsgs as dmFetch } from './lib/dm.mjs'
 import { ensureUv } from './lib/uvfetch.mjs'
-import { applyFlat, flatView, isNewShape, readConfig, writeConfig } from './src/lib/config.mjs'
+import { applyFlat, flatView, isNewShape, parseWindows, readConfig, writeConfig } from './src/lib/config.mjs'
 import { evaluateShare, readLedger, recordShare as gateRecord, writeLedger } from './src/host/gate.mjs'
+import { completePlan, makePlan } from './src/host/clock.mjs'
 
 export const name = 'bili-scroll'
 export const inject = ['webServer', 'tools', 'settings']
@@ -73,6 +74,13 @@ export const Config = !z ? undefined : z.object({
   commentPerRound: z.natural().default(1).extra('volatile', true),
   /** ⭐ 要 @ 谁（B站 昵称）；**留空 = 不发评论** —— 评论存在的意义就是 @ 那一下 */
   mentionName: z.string().default('').extra('volatile', true),
+  /**
+   * ⭐ 作息窗口（生物钟）。**空 = 走老的谷时窗口**（行为完全不变）。
+   * 格式：`20:00-24:00:1, 12:00-14:00:2`（开始-结束[:次数]），认不出的段落会被丢掉并记日志。
+   * 为什么是字符串而不是数组：DSH 原生设置页只认标量（且必须 volatile），数组塞不进去，
+   * 而这个值要同时在设置页 / `bili_config` 工具 / config.json 三处可改。
+   */
+  scheduleWindows: z.string().default('').extra('volatile', true),
   /** 关注关键词（空了用章程里默认那几组） */
   keywords: z.array(z.string()).default([]).extra('volatile', true),
   /** Python：指向 venv 里的那个最好 */
@@ -238,7 +246,7 @@ function reportMeta() {
    */
   const DEFAULTS = {
     dmWatch: true, dmWatchMinutes: 1, dmReplyPerDay: 0, dmOwnerUid: 0,
-    personaPrompt: '',
+    personaPrompt: '', scheduleWindows: '',
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     dmMode: 'only', dmUid: 0,
     keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '', reportLevel: 'full', replyToComments: false, replyPerRound: 1, favFolderId: 0,
@@ -1385,6 +1393,47 @@ function reportMeta() {
    }
   }
 
+  /* ─────────────── 生物钟（2.1）───────────────
+   * 和老的「谷时窗口」并存，靠**有没有配作息窗口**切换：
+   *   · `scheduleWindows` 空  ⇒ 走下面的老逻辑，行为一个字都不变（升级当天不会突变）
+   *   · 配了窗口              ⇒ 走生物钟：窗口内random一个时刻醒，30% 概率"今天不看"
+   */
+  const CLOCK_FILE = join(stateDir, 'clock.json')
+  /** 解析作息窗口；没配返回 null（= 用老路） */
+  const clockSchedule = () => {
+    const { windows, bad } = parseWindows(cfg.scheduleWindows)
+    if (bad.length && !clockSchedule.warned) {
+      clockSchedule.warned = true
+      log(`作息窗口有 ${bad.length} 段看不懂，已忽略：${bad.join(' / ')}`)
+    }
+    return windows.length ? { windows, minGapMin: 10, skipChance: 0.3 } : null
+  }
+  /**
+   * 生物钟这一跳。**所有异常都吞掉** —— 它跑在定时器里，抛出去会带走整个宿主（10-14 那次事故）。
+   */
+  const tickClock = (schedule, now) => {
+    try {
+      const st = readJson(CLOCK_FILE, {})
+      const plan = makePlan(schedule, st, now.getTime())
+      if (JSON.stringify(plan) !== JSON.stringify(st)) writeJson(CLOCK_FILE, plan)
+      if (!plan || plan.action === 'done') return
+      if (now.getTime() < Number(plan.atMs || 0)) return          // 还没到点
+      if (dutyBusy) return                                       // 到点了但上一轮还没收工 ⇒ 下一跳再看
+      if (plan.action === 'skip') {
+        // "今天不想看"：不跑那一轮，但把这次机会记掉（不记的话窗口永远可用 ⇒ 等于没有上限）
+        writeJson(CLOCK_FILE, completePlan(plan, now.getTime()))
+        log(`生物钟：这一次不看（${plan.atText}）—— 本轮不跑，也不算失败`)
+        return
+      }
+      const r = runDuty('clock')
+      if (!r || !r.started) return                               // 没起来就别记账，下一跳重试
+      writeJson(CLOCK_FILE, completePlan(plan, now.getTime()))
+      log(`生物钟：醒来（${plan.atText} · ${plan.withinWindow}）`)
+    } catch (e) {
+      log(`生物钟这一跳出错（已兜住，不影响宿主）：${e?.stack ?? e}`)
+    }
+  }
+
   /* ─────────────── 谷时定时器 ───────────────
    * 🔴 2026-10-14 事故（使用者那边表现为"DSH 突然崩了、网页 Failed to fetch (gateway/internal)"）：
    *    第一版是 `setInterval(tick, 60_000)`，回调里抛的 TypeError **没人接**，直接把整个宿主进程带走
@@ -1394,7 +1443,7 @@ function reportMeta() {
   const tick = () => {
     try {
       refreshCfg()                    // ⭐ 定时器活得比设置页久：每一跳都重新读一遍配置
-      if (!cfg.peakValley) return
+      if (!cfg.peakValley) return     // 总开关对两条路都生效
       const now = new Date()
       const st = readJson(dutyStateFile, {})
       const today = dayKey(now)
@@ -1402,6 +1451,11 @@ function reportMeta() {
       if (countPickedToday(now) >= Number(cfg.perDay || 0)) return
       // ⭐ 「不写日报」那档没有报告可数 ⇒ 数不出条数就保守一点：一天只跑一轮
       if (String(cfg.reportLevel || 'full') === 'off' && roundsToday(now) >= 1) return
+
+      // ⭐ 2.1：配了作息窗口就走生物钟，否则走下面的老谷时窗口
+      const schedule = clockSchedule()
+      if (schedule) { tickClock(schedule, now); return }
+
       for (const k of ['noon', 'night']) {
         if (!cfg[k]) continue
         if (!inWindow(now, WINDOWS[k])) continue

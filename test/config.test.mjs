@@ -5,7 +5,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  DEFAULTS, applyFlat, clamp, flatView, fromLegacy, isNewShape, merge,
+  DEFAULTS, applyFlat, clamp, flatView, formatWindows, fromLegacy, isNewShape, merge, parseWindows,
 } from '../src/lib/config.mjs'
 
 test('clamp：越界值被夹回，非法枚举回默认', () => {
@@ -26,7 +26,7 @@ test('clamp：越界值被夹回，非法枚举回默认', () => {
   assert.equal(c.schedule.windows[0].wakes, 12)
   assert.equal(c.share.daily, 0)
   assert.equal(c.share.minScore, 20)
-  assert.equal(c.dm.mode, 'off')
+  assert.equal(c.dm.mode, 'only')      // 非法值回默认；默认是 only（2.0 的口径）
   assert.equal(c.listen.commentIntervalSec, 60)
   assert.equal(c.notify.type, 'none')
   assert.equal(c.sync.maxInboundPerMinute, 60)
@@ -158,6 +158,47 @@ test('isNewShape：认得新形状，也认得老扁平形状', () => {
   assert.equal(isNewShape({ perDay: 5, mentionName: 'x' }), false)
   assert.equal(isNewShape(null), false)
   assert.equal(isNewShape([]), false)
+})
+
+test('parseWindows：人能怎么写就怎么认；认不出的段落丢掉而不是抛', () => {
+  const a = parseWindows('20:00-24:00:1')
+  assert.deepEqual(a.windows, [{ start: '20:00', end: '24:00', wakes: 1 }])
+  assert.deepEqual(a.bad, [])
+
+  const b = parseWindows('12:00-14:00:2, 20:00-24:00:1；23:00-02:00')
+  assert.equal(b.windows.length, 3)
+  assert.deepEqual(b.windows[0], { start: '12:00', end: '14:00', wakes: 2 })
+  assert.deepEqual(b.windows[2], { start: '23:00', end: '02:00', wakes: 1 }, '跨度跨午夜，次数默认 1')
+
+  // 段落里写错一个字：那一段丢掉，别的不受影响
+  const c = parseWindows('20:00-24:00:1, 晚上八点, 12:00~14:00')
+  assert.equal(c.windows.length, 2)
+  assert.deepEqual(c.bad, ['晚上八点'])
+  assert.deepEqual(c.windows[1], { start: '12:00', end: '14:00', wakes: 1 })
+
+  assert.deepEqual(parseWindows('').windows, [])
+  assert.deepEqual(parseWindows(null).windows, [])
+  // 次数越界要夹住
+  assert.equal(parseWindows('20:00-24:00:99').windows[0].wakes, 12)
+})
+
+test('formatWindows 与 parseWindows 互逆（设置页展示靠它）', () => {
+  const text = '20:00-24:00:1, 12:00-14:00:2'
+  const { windows } = parseWindows(text)
+  assert.equal(formatWindows(windows), text)
+  assert.equal(formatWindows([]), '')
+  assert.equal(formatWindows(null), '')
+})
+
+test('作息窗口走扁平视图往返：文本 → 数组 → 文本', () => {
+  const cfg = applyFlat(DEFAULTS, { scheduleWindows: '21:00-23:30:2' })
+  assert.deepEqual(cfg.schedule.windows, [{ start: '21:00', end: '23:30', wakes: 2 }])
+  assert.equal(flatView(cfg).scheduleWindows, '21:00-23:30:2')
+
+  // 写错了：窗口清空，但配置本身仍然合法
+  const bad = applyFlat(DEFAULTS, { scheduleWindows: '瞎写的' })
+  assert.deepEqual(bad.schedule.windows, [])
+  assert.equal(flatView(bad).scheduleWindows, '')
 })
 
 test('_set 能随配置一起落盘、读回（面板"本地优先"的账本）', () => {
