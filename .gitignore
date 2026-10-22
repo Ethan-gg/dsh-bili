@@ -1,0 +1,22 @@
+# 这个插件包自己的 git 仓库 —— 只装插件本体，别装用户数据
+node_modules/
+.venv/
+*.log
+*.bak*
+data/
+credential*.json
+seen_bvids.json
+out/
+log/
+*.cmd
+
+# 分析用的上游快照（dsh-bili-scroll / dsh-bili-whale 的原样代码）。
+# 只在 M2「Node 化移植」期间当参照；移植完就删，不进包也不进仓库。
+_ref/
+
+# 本地跑测试/调试时可能留下的东西
+.tmp/
+coverage/
+*.tgz
+# 参考云端落盘的事件
+cloud/data/

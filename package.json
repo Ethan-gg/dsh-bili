@@ -1,0 +1,79 @@
+{
+  "name": "dsh-bili-scroll",
+  "version": "2.1.1",
+  "description": "B站鱼娘（dsh-bili-scroll）：每天替你刷一轮 B站 —— 读字幕/弹幕挑出值得的、写一份日报，值得的会 @ 你",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "bilibili",
+    "mcp",
+    "duty"
+  ],
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "repository": { "type": "git", "url": "git+https://github.com/Ethan-gg/dsh-bili.git" },
+  "homepage": "https://github.com/Ethan-gg/dsh-bili#readme",
+  "bugs": { "url": "https://github.com/Ethan-gg/dsh-bili/issues" },
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "lib",
+    "src",
+    "cloud",
+    "prompts",
+    "vendor",
+    "README.md",
+    "AGENTS.md",
+    "selfcheck.mjs",
+    "LICENSE",
+    "NOTICE.md",
+    "CONTRIBUTORS.md"
+  ],
+  "engines": {
+    "dsh": ">=0.1.7-rc.1",
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ]
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
