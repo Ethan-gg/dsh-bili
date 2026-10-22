@@ -251,6 +251,10 @@ function WatchTab() {
       const [dmWatch, setDmWatch] = React.useState(null)          // 私信双向开关
       const [dmMode, setDmMode] = React.useState(null)      // 投递方式：off / only / both
       const [mention, setMention] = React.useState(null)
+      const [schedWin, setSchedWin] = React.useState(null)        // 作息窗口（本地草稿）
+      const [notifyType, setNotifyType] = React.useState(null)    // 通知后端
+      const [notifyUrl, setNotifyUrl] = React.useState(null)
+      const [notifyCmd, setNotifyCmd] = React.useState(null)
       const [login, setLogin] = React.useState(null)
       const [runNote, setRunNote] = React.useState(null)
       const [report, setReport] = React.useState(null)        // 非 null = 报告已展开   // 顶部那行状态（跑一轮/装依赖的反馈原来在最底下，看不见）
@@ -287,6 +291,10 @@ function WatchTab() {
         if (cfg && dmMode === null) setDmMode(cfg.dmMode || 'only')
         if (cfg && dmWatch === null) setDmWatch(cfg.dmWatch !== false)   // 2.0 起默认开
         if (cfg && favId === null) setFavId(String(cfg.favFolderId ?? 0))
+        if (cfg && schedWin === null) setSchedWin(cfg.scheduleWindows || '')
+        if (cfg && notifyType === null) setNotifyType(cfg.notifyType || 'none')
+        if (cfg && notifyUrl === null) setNotifyUrl(cfg.notifyUrl || '')
+        if (cfg && notifyCmd === null) setNotifyCmd(cfg.notifyCmd || '')
       }, [cfg])
 
       // ⭐ 收藏夹列表：只读一次，读不到就空列表（别每 5 秒重拉）
@@ -510,6 +518,15 @@ function WatchTab() {
         } catch (e) { say(String(e?.message ?? e), 'warn') } finally { setBusy('') }
       }
 
+      const onNotifyTest = async () => {
+        setBusy('notify')
+        try {
+          const r = await jpost('/notify-test', {})
+          if (r && r.ok) say(`通知发出去了（${r.backend}）` + (r.detail ? '：' + r.detail : ''), 'good')
+          else say('通知没发出去：' + ((r && (r.error || r.detail)) || '未知原因'), 'warn')
+        } catch (e) { say(String(e?.message ?? e), 'warn') } finally { setBusy('') }
+      }
+
       const onSaveText = async () => {
         const list = String(kws || '').split('\n').map((s) => s.trim()).filter(Boolean)
         await patch({ keywords: list, personaPrompt: String(persona || '').trim() }, '关键词 / 人设 / 工作区')
@@ -566,6 +583,19 @@ function WatchTab() {
               on: sw(k),
               onChange: (v) => patch({ [k]: v }, win[k].label),
             }))) : null),
+
+        /* ── 作息（2.1 生物钟）── */
+        h('div', { 'data-bd-sec': '', 'data-bd-group': 'daily', 'data-bd-away': tab === 'daily' ? undefined : '' },
+          h('div', { 'data-bd-h': '' }, '作息：她自己什么时候醒'),
+          h('div', { 'data-bd-label': '' }, '醒来时段'),
+          h('input', {
+            'data-bd-input': '', value: schedWin ?? '',
+            placeholder: '例如 20:00-24:00:1, 12:00-14:00:2',
+            onChange: (e) => setSchedWin(e.target.value),
+            onBlur: () => patch({ scheduleWindows: String(schedWin || '').trim() }, '作息窗口'),
+          }),
+          h('div', { 'data-bd-note': '' }, '格式：开始-结束[:次数]，多个用逗号隔开。留空 = 用上面的峰谷时段（老逻辑）。'),
+          h('div', { 'data-bd-note': '' }, '配了之后：在时段里随机一个时刻醒（不是整点），并且有 30% 的概率「今天不看」。')),
 
         /* ── 一轮挑几条 ── */
         h('div', { 'data-bd-sec': '', 'data-bd-group': 'daily', 'data-bd-away': tab === 'daily' ? undefined : '' },
@@ -666,6 +696,50 @@ function WatchTab() {
             st.asrTail ? h('div', null,
               h('div', { 'data-bd-note': '' }, st.asrInstalling ? '正在装转写依赖（进度）：' : '转写依赖的日志（末尾）—— 只有「没字幕的视频」用得到它：'),
               h('pre', { 'data-bd-pre': '' }, st.asrTail)) : null) : null),
+
+        /* ── 通知（2.1）── */
+        h('div', { 'data-bd-sec': '', 'data-bd-group': 'social', 'data-bd-away': tab === 'social' ? undefined : '' },
+          h('div', { 'data-bd-h': '' }, '把结果推给你'),
+          h('div', { 'data-bd-label': '' }, '推送方式'),
+          h('select', {
+            'data-bd-input': '', value: notifyType ?? 'none',
+            onChange: (e) => { setNotifyType(e.target.value); patch({ notifyType: e.target.value }, '推送方式') },
+          },
+            h('option', { value: 'none' }, '不推送 —— 只写在报告里（默认）'),
+            h('option', { value: 'desktop' }, '桌面通知（Windows 右下角弹窗）'),
+            h('option', { value: 'webhook' }, 'Webhook —— 飞书 / 钉钉 / 企业微信 / QQ 机器人'),
+            h('option', { value: 'command' }, '自定义命令 —— 消息作为最后一个参数传入'),
+            h('option', { value: 'file' }, '写到文件'),
+            h('option', { value: 'stdout' }, '打到日志')),
+          notifyType === 'webhook' ? h('div', null,
+            h('div', { 'data-bd-label': '' }, 'Webhook 地址'),
+            h('input', {
+              'data-bd-input': '', value: notifyUrl ?? '',
+              placeholder: 'https://open.feishu.cn/open-apis/bot/v2/hook/…',
+              onChange: (e) => setNotifyUrl(e.target.value),
+              onBlur: () => patch({ notifyUrl: String(notifyUrl || '').trim() }, 'Webhook 地址'),
+            }),
+            h('div', { 'data-bd-note': '' }, '报文格式按域名自动适配（飞书 msg_type / 钉钉 msgtype / 企微 msgtype / 通用 content）—— 你不用记这些。')) : null,
+          notifyType === 'command' ? h('div', null,
+            h('div', { 'data-bd-label': '' }, '可执行文件路径'),
+            h('input', {
+              'data-bd-input': '', value: notifyCmd ?? '',
+              placeholder: 'C:\\tools\\notify.exe',
+              onChange: (e) => setNotifyCmd(e.target.value),
+              onBlur: () => patch({ notifyCmd: String(notifyCmd || '').trim() }, '推送命令'),
+            }),
+            h('div', { 'data-bd-note': '' }, '消息会作为最后一个参数传进去（不走 shell —— 正文里带引号也不会被当成命令）。')) : null,
+          h('div', { 'data-bd-row': '' },
+            h('button', {
+              'data-bd-btn': '', disabled: Boolean(busy) || (notifyType ?? 'none') === 'none',
+              onClick: onNotifyTest,
+            }, busy === 'notify' ? '正在发…' : '发条测试')),
+          h(ToggleRow, {
+            label: '每天把两本日记的摘要也推给我',
+            note: '给主人的那本 + 给自己的那本，各取最后一条。没写的那本会明说「今天没写」，不会悄悄留白。',
+            on: sw('diaryPush'),
+            onChange: (v) => patch({ diaryPush: v }, '日记摘要推送'),
+          })),
 
         /* ── 关注什么 / 在哪儿刷 ── */
         h('div', { 'data-bd-sec': '', 'data-bd-group': 'taste', 'data-bd-away': tab === 'taste' ? undefined : '' },

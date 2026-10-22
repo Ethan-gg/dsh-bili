@@ -12,6 +12,17 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const INDEX = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+const CLIENT = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
+
+test('设置页给了新东西的入口，宿主也有对应的接口（否则是"看得见点不动"）', () => {
+  // 客户端：作息窗口 / 推送方式 / 发条测试
+  assert.match(CLIENT, /scheduleWindows/, '要有作息窗口输入框')
+  assert.match(CLIENT, /\/notify-test/, '要有「发条测试」按钮走的接口')
+  assert.match(CLIENT, /notifyType/, '要能选推送方式')
+  // 宿主：接口真的注册了
+  assert.match(INDEX, /path === '\/api\/bili-duty\/notify-test'/, '宿主得真的有这个路由')
+  assert.match(INDEX, /const notifyCfg = \(\) => \{/, '通知配置要有一处统一解析（新形状 / 扁平都能读）')
+})
 
 test('POST /config 的字段白名单从 DEFAULTS 推导（2.0 手写时漏了 7 个键）', () => {
   assert.match(INDEX, /const CFG_KEYS = Object\.keys\(DEFAULTS\)/, 'CFG_KEYS 必须从 DEFAULTS 推导')

@@ -403,6 +403,12 @@ export function flatView(cfg) {
     favFolderId: c.fav.folderId,
     /** 作息窗口的文本形式：DSH 原生设置页只认标量，数组塞不进去 */
     scheduleWindows: formatWindows(c.schedule.windows),
+    /** 通知：设置页只直接暴露最常用的三个（类型 / 地址 / 命令），其余走 config.json */
+    notifyType: c.notify.type,
+    notifyUrl: c.notify.url,
+    notifyCmd: c.notify.cmd,
+    /** 日记摘要推送 */
+    diaryPush: c.diary.push,
   }
 }
 
@@ -442,6 +448,10 @@ export function applyFlat(cfg, patch = {}) {
   if (has('favFolderId')) c.fav.folderId = patch.favFolderId
   // 作息窗口：文本 ⇄ 数组。认不出的段在这里被丢掉（写错了不该让插件起不来）
   if (has('scheduleWindows')) c.schedule.windows = parseWindows(patch.scheduleWindows).windows.slice(0, 6)
+  if (has('notifyType')) c.notify.type = patch.notifyType
+  if (has('notifyUrl')) c.notify.url = patch.notifyUrl
+  if (has('notifyCmd')) c.notify.cmd = patch.notifyCmd
+  if (has('diaryPush')) c.diary.push = patch.diaryPush
   return clamp(c)
 }
 

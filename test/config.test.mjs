@@ -201,6 +201,19 @@ test('作息窗口走扁平视图往返：文本 → 数组 → 文本', () => {
   assert.equal(flatView(bad).scheduleWindows, '')
 })
 
+test('通知 / 日记也走扁平视图（设置页今天就能改）', () => {
+  const cfg = applyFlat(DEFAULTS, { notifyType: 'webhook', notifyUrl: 'https://x/y', notifyCmd: '', diaryPush: false })
+  assert.equal(cfg.notify.type, 'webhook')
+  assert.equal(cfg.notify.url, 'https://x/y')
+  assert.equal(cfg.diary.push, false)
+  const flat = flatView(cfg)
+  assert.equal(flat.notifyType, 'webhook')
+  assert.equal(flat.notifyUrl, 'https://x/y')
+  assert.equal(flat.diaryPush, false)
+  // 非法后端会被 clamp 回 none
+  assert.equal(applyFlat(DEFAULTS, { notifyType: 'telegram' }).notify.type, 'none')
+})
+
 test('_set 能随配置一起落盘、读回（面板"本地优先"的账本）', () => {
   const c = clamp({ _set: ['perDay', 'mentionName'] })
   assert.deepEqual(c._set, ['perDay', 'mentionName'])

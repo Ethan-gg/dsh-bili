@@ -38,6 +38,7 @@ import { ensureUv } from './lib/uvfetch.mjs'
 import { applyFlat, flatView, isNewShape, parseWindows, readConfig, writeConfig } from './src/lib/config.mjs'
 import { evaluateShare, readLedger, recordShare as gateRecord, writeLedger } from './src/host/gate.mjs'
 import { completePlan, makePlan } from './src/host/clock.mjs'
+import { sendNotify, TEST_MESSAGE } from './src/host/notify.mjs'
 
 export const name = 'bili-scroll'
 export const inject = ['webServer', 'tools', 'settings']
@@ -81,6 +82,14 @@ export const Config = !z ? undefined : z.object({
    * 而这个值要同时在设置页 / `bili_config` 工具 / config.json 三处可改。
    */
   scheduleWindows: z.string().default('').extra('volatile', true),
+  /** 通知后端：none / desktop / webhook / command / dm / stdout / file（2.1） */
+  notifyType: z.string().default('none').extra('volatile', true),
+  /** webhook 地址（飞书/钉钉/企微/QQ 机器人）——报文格式由宿主按域名自动适配 */
+  notifyUrl: z.string().default('').extra('volatile', true),
+  /** 自定义命令（消息作为最后一个参数传入，不走 shell） */
+  notifyCmd: z.string().default('').extra('volatile', true),
+  /** 每天把日记摘要也推给你 */
+  diaryPush: z.boolean().default(true).extra('volatile', true),
   /** 关注关键词（空了用章程里默认那几组） */
   keywords: z.array(z.string()).default([]).extra('volatile', true),
   /** Python：指向 venv 里的那个最好 */
@@ -247,6 +256,7 @@ function reportMeta() {
   const DEFAULTS = {
     dmWatch: true, dmWatchMinutes: 1, dmReplyPerDay: 0, dmOwnerUid: 0,
     personaPrompt: '', scheduleWindows: '',
+    notifyType: 'none', notifyUrl: '', notifyCmd: '', diaryPush: true,
     perDay: 5, peakValley: false, noon: true, night: true, autoComment: false, transcribe: false, asrModel: 'small',
     dmMode: 'only', dmUid: 0,
     keywords: [], commentPerRound: 1, mentionName: '', pythonPath: 'python', dshBin: '', headlessProfile: 'headless', overlayMcp: true, workspace: '', reportLevel: 'full', replyToComments: false, replyPerRound: 1, favFolderId: 0,
@@ -662,6 +672,23 @@ function reportMeta() {
       })
       writeLedger(sharesFile, next)
     } catch (e) { log('记账失败（不影响这一条已发出）：' + String(e?.message ?? e)) }
+  }
+
+  /**
+   * 通知配置：新形状直接读；2.0 的扁平配置用设置页能改的那三个键拼一份
+   * （`notify.*` 在扁平层只暴露 type / url / cmd，其余走 config.json）。
+   */
+  const notifyCfg = () => {
+    const raw = readJson(cfgFile, {})
+    if (isNewShape(raw)) return readConfig(cfgFile).config.notify
+    return {
+      type: String(cfg.notifyType || 'none'),
+      url: String(cfg.notifyUrl || ''),
+      template: 'text',
+      cmd: String(cfg.notifyCmd || ''),
+      args: [],
+      path: '',
+    }
   }
 
   tool({
@@ -2146,6 +2173,13 @@ function reportMeta() {
       const { clean, host } = await persistCfg(patch)
       log(`设置已更新：${JSON.stringify(clean)}（DSH 那边${host.ok ? '已同步' : '没写成：' + host.error}）`)
       return sendJson(res, 200, { ok: true, config: cfg, host })
+    }
+
+    if (req.method === 'POST' && path === '/api/bili-duty/notify-test') {
+      // 「发条测试」：**真发一条**，把结果原样回给设置页 —— 配错了当场能看见，不用等下一轮
+      const r = await sendNotify(notifyCfg(), TEST_MESSAGE())
+      log(`通知测试（${r.backend}）：${r.ok ? '成功' : '失败 ' + (r.error ?? '')}`)
+      return sendJson(res, 200, { ok: r.ok, backend: r.backend, detail: r.detail ?? null, error: r.error ?? null })
     }
 
     if (req.method === 'POST' && path === '/api/bili-duty/run') {
