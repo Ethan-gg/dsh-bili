@@ -1,5 +1,5 @@
 /**
- * dsh-bili-scroll —— host 半端
+ * dsh-bili —— host 半端
  * ============================================================================
  * 它是什么：每天替你刷一轮 B站 的插件版。
  *   1. **插件内部起那份 Python MCP**（`vendor/bilibili-mcp/mcp_server.py`），把它的能力
@@ -26,7 +26,6 @@ const defineTool = hostDeps.defineTool
 import { spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
-import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { McpClient } from './lib/mcp.mjs'
 import { verifyRecent, appendVerifyToReport } from './lib/verify.mjs'
@@ -36,6 +35,7 @@ import { resolveUid } from './lib/uid.mjs'
 import { loadCred as dmCred, listSessions as dmList, fetchMsgs as dmFetch } from './lib/dm.mjs'
 import { ensureUv } from './lib/uvfetch.mjs'
 import { applyFlat, flatView, isNewShape, parseWindows, readConfig, writeConfig } from './src/lib/config.mjs'
+import { findDshCli as locateDshCli, hasDshOnPath as dshOnPath } from './src/lib/dsh.mjs'
 import { evaluateShare, readLedger, recordShare as gateRecord, writeLedger } from './src/host/gate.mjs'
 import { completePlan, makePlan, windowsOf } from './src/host/clock.mjs'
 import { formatMaterial as formatCommentMaterial, pickNewReplies } from './src/host/listen.mjs'
@@ -50,14 +50,14 @@ import { TYPES } from './src/sync/protocol.mjs'
 import { homePaths } from './src/lib/paths.mjs'
 import { createWatchdog, deliverToSession, hasSession } from './src/host/wake.mjs'
 
-export const name = 'bili-scroll'
+export const name = 'bili'
 export const inject = ['webServer', 'tools', 'settings']
 
 /**
  * 🔴 每个字段都要 `.extra('volatile', true)`：DSH 的 settings.update() 只认 volatile 字段
  *    （`volatileForm(schema)`，见 dsh-settings），没有这个标记写设置时会抛
  *    "Plugin entry … has no volatile fields"。另外两个条件是：
- *    **loader entry 的 id 必须等于命名空间名**（我们 patch 里就是 `bili-scroll`）+ **本模块导出 Config**。
+ *    **loader entry 的 id 必须等于命名空间名**（我们 patch 里就是 `bili`）+ **本模块导出 Config**。
  */
 // ⚠️ schemastery 彻底拿不到时，这里会是 undefined —— **插件照常加载**，只是设置页降级
 //    （宁可少一个设置页，也不能因为一个 import 让整条插件不激活 ✗）
@@ -184,7 +184,7 @@ export function apply(ctx, config) {
   const bootLogs = []
   const stateDir = stateDirOf(ctx, (m) => {
     bootLogs.push(String(m))
-    try { console.log('[bili-scroll] ' + m) } catch { /* 没控制台就算了 */ }
+    try { console.log('[bili] ' + m) } catch { /* 没控制台就算了 */ }
   })
   /**
    * ⭐ M3：常驻会话的服务**运行时取**，绝不写进 `inject`。
@@ -407,7 +407,7 @@ function reportMeta() {
    * ⚠️ DSH 自带的「插件设置」页**不需要注册** —— 老代码那句 `ctx.settings.register(...)` 是个不存在的方法，
    *    每次都抛 TypeError、被 catch 吞掉（2026-10-17 读宿主源码 @deepseek-ai/dsh-settings 才明白）：
    *    describe() 自己扫 profile 里**带 volatile 字段**的条目列出来（lib/index.js:413-452），
-   *    命名空间 ns **等于 loader 条目的 id**（我们 cordis.patch.yml 里是 `bili-scroll`，不是老注释写的 bili-duty）。
+   *    命名空间 ns **等于 loader 条目的 id**（我们 cordis.patch.yml 里是 `bili`，不是老注释写的 bili-duty）。
    * 另外两条同样要紧（都是读宿主源码得来的，别再想当然）：
    *    ① `apply(ctx, config)` 收到的 config 就是 fiber.config 本体，volatile 字段一改宿主**就地**改它
    *       （cordis-plugin-loader/src/config/entry.ts：`this.fiber._config = …` + `_commitVolatile()`）⇒
@@ -1367,15 +1367,15 @@ function reportMeta() {
     return st.day === dayKey(now) ? Number(st.count || 0) : 0
   }
 
-  // ⭐ 一键升级：由宿主自己跑 `dsh plugin --profile web add dsh-bili-scroll`
+  // ⭐ 一键升级：由宿主自己跑 `dsh plugin --profile web add dsh-bili`
   //    ⚠️ 装完必须重启 dsh 才生效；⚠️ Windows 上"替换正在运行的插件"可能被文件占用挡住（我们踩过）
   let upgrading = false
-  let lastUpdateSource = 'npm'   // 上一次「检查更新」是从哪儿查到新版的：npm / github（一键升级按它选装法）
+  let lastUpdateSource = 'github'   // 上一次「检查更新」是从哪儿查到新版的：github / npm（一键升级按它选装法）
   let ghUpdateCache = null
   const runUpgrade = () => {
     if (upgrading) return { ok: true, busy: true, log: installLogFile, hint: '正在升级，别重复点' }
     upgrading = true
-    const spec = lastUpdateSource === 'github' ? 'github:Ethan-gg/dsh-bili' : 'dsh-bili-scroll'
+    const spec = lastUpdateSource === 'npm' ? 'dsh-bili' : 'github:Ethan-gg/dsh-bili'
     appendInstall('\n=== ' + new Date().toISOString() + ' 开始升级（add ' + spec + '）===\n')
     ;(async () => {
       try {
@@ -1385,7 +1385,7 @@ function reportMeta() {
         // ⚠️ 2026-10-19：找不到 dsh 时不再硬跑，直接把要做的事说清楚
         if (dsh.missing) {
           appendInstall('=== 没法自动升级：找不到 dsh。' + dsh.hint + ' ===\n')
-          appendInstall('=== 也可以自己手动跑一次：dsh plugin --profile web add dsh-bili-scroll ===\n')
+          appendInstall('=== 也可以自己手动跑一次：dsh plugin --profile web add dsh-bili ===\n')
           upgrading = false
           return
         }
@@ -1395,7 +1395,7 @@ function reportMeta() {
         appendInstall('$ ' + cmd + ' ' + args.join(' ') + '\n')
         const code = await spawnTo(cmd, args, { sink: appendInstall })
         if (code === 0) appendInstall('=== 升级完成 —— 重启一次 dsh 才生效 ===\n')
-        else appendInstall('=== 升级没成功（exit ' + code + '）。可以自己手动跑一次：dsh plugin --profile web add dsh-bili-scroll ===\n')
+        else appendInstall('=== 升级没成功（exit ' + code + '）。可以自己手动跑一次：dsh plugin --profile web add dsh-bili ===\n')
       } catch (e) { appendInstall('升级崩了：' + (e?.stack ?? e) + '\n') } finally { upgrading = false }
     })()
     return { ok: true, started: true, log: installLogFile, hint: '正在升级 —— 完成后重启一次 dsh 才生效' }
@@ -1404,73 +1404,22 @@ function reportMeta() {
   /**
    * ⭐⭐ 2026-10-19（主人："改一下，让他的 dsh 直接弄好不行吗"）：**自己去把 dsh 找出来，别让用户手填**。
    *   桌面版（Electron）不是 npm -g 装的、`dsh` 也不在 PATH 上 ⇒ 老逻辑只猜三个固定位置，猜不到就让用户填 `dshBin` ✗
-   *   ⇒ 现在从近到远挨个试，最后**在应用目录里做一次有界递归搜索**（只认 `dsh/lib/bin.js`，最多几千个目录就收手）。
+   * ⭐⭐ 2026-10-23：实现搬到 `src/lib/dsh.mjs`（这样 `test/dsh.test.mjs` 能直接验），
+   *   并补上**桌面版应用根目录**这条漏掉的路径 —— portable 构建的 `node_modules` 在 exe 旁边、不在 `resources` 下
+   *   （本机诊断里「dsh：没找到」就是这条：老逻辑只从 `resources` 往下搜 ⇒ 永远搜不到）。
+   * ⭐ 2026-10-19：以前找不到 dsh 就退到裸 `dsh` 硬跑 ⇒ 必然 spawn 失败、只留 exit 1 + 乱码。
+   *   现在先看 PATH 里到底有没有它：**没有就明确返回 missing**（调用方会停下来说清楚），
+   *   有才允许"最后一招"（有些人是手动配过 PATH 的 npm 全局）✓
+   * ⭐⭐ 2026-10-23 第二轮（重启后仍报"没找到"）：宿主其实是桌面版拉起的 **`node.exe <…>/@deepseek-ai/dsh/lib/bin.js`**
+   *   子进程 ⇒ `process.execPath` 只是 node.exe、指不到安装位置；**`process.argv[1]` 才是正在跑的那个 dsh 入口**，
+   *   所以把 argv 一起传下去（见 `src/lib/dsh.mjs`）。
    */
-  const findDshCli = () => {
-    // ① 用户显式填的
-    const explicit = String(cfg.dshBin || '').trim()
-    if (explicit && existsSync(explicit)) return explicit
-    // ② 让 Node 的解析器替我们找（web profile / 桌面版 app 目录，两条路都可能命中）
-    try {
-      const req = createRequire(import.meta.url)
-      for (const spec of ['@deepseek-ai/dsh/lib/bin.js', '@deepseek-ai/dsh']) {
-        try { const p = req.resolve(spec); if (p && existsSync(p)) return p } catch { /* 换下一个 */ }
-      }
-    } catch { /* 解析器不可用就跳过 */ }
-    // ③ npm 全局 / POSIX 常见位置
-    for (const g of [
-      join(process.env.APPDATA || '', 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
-      join(process.env.ProgramFiles || '', 'nodejs', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
-      '/usr/local/lib/node_modules/@deepseek-ai/dsh/lib/bin.js',
-      '/usr/lib/node_modules/@deepseek-ai/dsh/lib/bin.js',
-    ].filter(Boolean)) if (existsSync(g)) return g
-    // ④ 桌面版：在应用目录里有界搜一遍
-    const roots = []
-    if (process.resourcesPath) roots.push(process.resourcesPath)
-    try { roots.push(join(dirname(process.execPath), 'resources')) } catch { /* 没有就算了 */ }
-    const tried = []
-    for (const root of roots) {
-      if (!root || tried.includes(root) || !existsSync(root)) continue
-      tried.push(root)
-      const hit = scanForDsh(root, 0, { n: 0 })
-      if (hit) return hit
-    }
-    return ''
-  }
-  // 有界递归：深度 ≤ 7、最多翻 4000 个目录（桌面版 resources 里目录不小，别再往上加了）
-  const scanForDsh = (dir, depth, budget) => {
-    if (depth > 7 || budget.n > 4000) return ''
-    let ents = []
-    try { ents = readdirSync(dir, { withFileTypes: true }) } catch { return '' }
-    for (const d of ents) {
-      if (!d.isDirectory()) continue
-      if (++budget.n > 4000) return ''
-      const p = join(dir, d.name)
-      if (d.name === 'dsh') {
-        const bin = join(p, 'lib', 'bin.js')
-        if (existsSync(bin)) return bin
-      }
-      const hit = scanForDsh(p, depth + 1, budget)
-      if (hit) return hit
-    }
-    return ''
-  }
-
-  // ⭐ 2026-10-19：以前找不到 dsh 就退到裸 `dsh` 硬跑 ⇒ 必然 spawn 失败、只留 exit 1 + 乱码。
-  //    现在先看 PATH 里到底有没有它：**没有就明确返回 missing**（调用方会停下来说清楚），
-  //    有才允许"最后一招"（有些人是手动配过 PATH 的 npm 全局）✓
-  const hasDshOnPath = () => {
-    const exts = process.platform === 'win32' ? ['', '.cmd', '.exe', '.bat', '.ps1'] : ['']
-    const dirs = String(process.env.PATH || '').split(process.platform === 'win32' ? ';' : ':')
-    for (const d of dirs) {
-      const dir = d.replace(/^"|"$/g, '').trim()
-      if (!dir) continue
-      for (const e of exts) {
-        try { if (existsSync(join(dir, 'dsh' + e))) return true } catch { /* 忽略坏路径 */ }
-      }
-    }
-    return false
-  }
+  const findDshCli = () => locateDshCli({
+    explicit: cfg.dshBin,
+    execPath: process.execPath,
+    selfUrl: import.meta.url,
+    argv: process.argv,
+  })
 
   let autoDshLogged = ''
   // ⭐ 缓存：设置页每 5 秒拉一次 /status，不能让"找不到时的递归搜索"每 5 秒跑一遍
@@ -1498,7 +1447,7 @@ function reportMeta() {
     // ⭐ 但也不能一味"判死"：有些人的 PATH 里确实有 dsh（例如手动配过 PATH 的 npm 全局）
     //    ⇒ 保留**最后一招**：用 PATH 里那个试一次（日志说明白），失败时报告里也会写清原因 ✓
     const hint = '已经把常见位置和应用目录都翻过一遍了。可以手动把「dsh 路径」填成 <应用目录>/…/@deepseek-ai/dsh/lib/bin.js，或改用 npm 装的 dsh'
-    if (!hasDshOnPath()) {
+    if (!dshOnPath()) {
       log('⚠️ 找不到 dsh（常见位置、应用目录、PATH 里都没有）⇒ ' + hint)
       return { missing: true, hint }
     }
@@ -3030,9 +2979,9 @@ function reportMeta() {
     // 「检查更新」：⚠️ 只在用户点按钮时才联网（不偷偷发请求 ✓），结果缓存一天 ✓
     // ⭐ 2026-10-19（主人："现在自动更新能让扫 github 吗"）：**两条源都问** ——
     //    npm 上可能还没发上去（账号被暂停时会停在旧版），那时候 GitHub 才是最新 ✓
-    //    ⇒ 谁给的版本号更新就用谁，并记住来源：一键升级按来源选 `add dsh-bili-scroll` / `add github:…` ✓
+    //    ⇒ 谁给的版本号更新就用谁，并记住来源：一键升级按来源选 `add dsh-bili` / `add github:…` ✓
     if (req.method === 'GET' && path === '/api/bili-duty/update') {
-      const out = { ok: true, current: myVersion(), latest: '', hasNew: false, source: 'npm', page: 'https://www.npmjs.com/package/dsh-bili-scroll' }
+      const out = { ok: true, current: myVersion(), latest: '', hasNew: false, source: 'github', page: 'https://github.com/Ethan-gg/dsh-bili' }
       // ⭐ 要比谁更新，不能只比不相等 —— 否则本地版本高于 npm 时会误报有新版
       // ⭐ 2026-10-20：预发布标签要单独看 —— 以前只比三段数字 ⇒ `0.2.0-rc.1` 被当成 [0,2,0]，
       //    跟正式版打平、却比 0.1.18 更大 ⇒ 用户会被提示"升级到 rc 版" ✗；现在数字段相同时**正式版 > 预发布版**
@@ -3051,12 +3000,12 @@ function reportMeta() {
       try {
         if (fresh(updateCache)) npmVer = updateCache.latest
         else {
-          const r = await fetch('https://registry.npmjs.org/dsh-bili-scroll/latest', { signal: AbortSignal.timeout(8000) })
+          const r = await fetch('https://registry.npmjs.org/dsh-bili/latest', { signal: AbortSignal.timeout(8000) })
           const j = await r.json()
           npmVer = String(j.version || '')
           updateCache = { at: Date.now(), latest: npmVer }
         }
-      } catch (e) { log('查 npm 版本没成功（接着查 GitHub）：' + (e?.message ?? e)) }
+      } catch { /* npm 上可能还没发布（404）—— 静默，别把用户吓一跳 */ }
       // ② GitHub（要加速器；不通就安静跳过，别打扰用户）
       let ghVer = ''
       try {
@@ -3064,7 +3013,7 @@ function reportMeta() {
         else {
           const r = await fetch('https://api.github.com/repos/Ethan-gg/dsh-bili/contents/package.json', {
             signal: AbortSignal.timeout(6000),
-            headers: { 'user-agent': 'dsh-bili-scroll', accept: 'application/vnd.github+json' },
+            headers: { 'user-agent': 'dsh-bili', accept: 'application/vnd.github+json' },
           })
           if (r.ok) {
             const j = await r.json()
@@ -3074,10 +3023,10 @@ function reportMeta() {
           }
         }
       } catch { /* 没有加速器时这里基本都失败 —— 静默，别打扰 */ }
-      // 谁新用谁；一样新时优先 npm（装起来快）
-      if (ghVer && (!npmVer || cmp(ghVer, npmVer) > 0)) { out.latest = ghVer; out.source = 'github' }
+      // 谁新用谁；一样新时优先 github（现在 GitHub 是主通道）
+      if (ghVer && (!npmVer || cmp(ghVer, npmVer) >= 0)) { out.latest = ghVer; out.source = 'github' }
       else out.latest = npmVer || ghVer
-      if (out.source === 'github') out.page = 'https://github.com/Ethan-gg/dsh-bili'
+      out.page = 'https://github.com/Ethan-gg/dsh-bili'
       out.hasNew = Boolean(out.latest) && cmp(out.latest, out.current) > 0
       lastUpdateSource = out.source
       if (!out.latest) { out.ok = false; out.error = '两条源都没查到版本号（网络可能不通）' }

@@ -42,7 +42,7 @@
   "id": "evt_6f1a9c2b4d8e4a1f9b3c7d2e5a0f8c11",
   "at": "2026-10-22T20:31:04.512Z",
   "from": "local",
-  "source": "dsh-bili-scroll/2.1.0",
+  "source": "dsh-bili/2.1.0",
   "type": "memory.append",
   "payload": { "kind": "seen", "ref": { "bvid": "BV1xx411c7mD" }, "text": "看了 12 分钟，讲 MCP 的超时", "at": "2026-10-22T20:31:04.512Z" },
   "sig": "hmac-sha256:9f2c…"

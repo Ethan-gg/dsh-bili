@@ -1,3 +1,37 @@
+## 2.2.0 — 2026-10-23
+
+**改名：`dsh-bili-scroll` → `dsh-bili`**（中文名仍是「B站鱼娘」）。这个项目已经和最初的上游版本差别很大，
+继续顶着别人的包名不合适，所以 2.2 起换成自己的名字。
+
+- **包名 / 插件 id 全改**：`package.json` 的 `name`、`cordis.patch.yml` 的挂载项、
+  宿主命名空间（`export const name = 'bili'`）、前端模块 id、设置页 slot id、常驻会话 id、
+  云桥事件的 `source` 全部换成 `dsh-bili` / `bili`。
+- ⚠️ **升级必看**：从旧版升上来的要**先 `dsh plugin --profile web remove dsh-bili-scroll`，再装 `dsh-bili`** —— 两个都留着会加载两份插件。
+  **家目录不变**（仍是 `~/.dsh/bili`）：设置、报告、日记、判重表、登录凭证、venv 全都不用动。
+- **安装通道改成 GitHub**：npm 上还没有 `dsh-bili`（404），所以「检查更新 / 一键升级」以 GitHub 仓库为准
+  （npm 那条源保留着，将来发到 npm 会自动用上）。页面上的更新入口也指向仓库。
+- **修「dsh：没找到」**（2026-10-23，本机诊断 2.1.1 抓的）：
+  1. 桌面版 portable 构建把 `node_modules/@deepseek-ai/dsh/lib/bin.js` 放在**应用根目录**（`dsh Desktop.exe` 旁边），
+     而老逻辑只从 `resources/` 往下搜 ⇒ 永远搜不到。
+  2. 更要紧的是：**插件跑的那个宿主进程不是 Electron 主进程**，而是桌面版拉起的
+     `node.exe "<app>/node_modules/@deepseek-ai/dsh/lib/bin.js" --profile web …` 子进程
+     ⇒ `process.execPath` 只是 `node.exe`，`dirname` 指不到安装位置，Electron 主进程那套推断在这儿全无效。
+     真正可靠的是 **`process.argv[1]`：就是正在跑的 dsh 入口本身**。
+  现在探测顺序：用户填的 `dshBin` → **argv 里的 `…/@deepseek-ai/dsh/lib/bin.js`** →
+  Node 解析器（插件树 / 应用包 / argv 所在那棵树）→ 固定落点（应用根 `node_modules`、
+  `resources/app.asar.unpacked`、`resources/app`、npm 全局）→ 有界递归兜底
+  （应用根优先，`resources` 随后；只认 `dsh/lib/bin.js`，深度 ≤ 7 / 最多 4000 个目录）。
+  实现抽到 `src/lib/dsh.mjs`（原来埋在 `index.js` 闭包里，没法测），`test/dsh.test.mjs` 共 10 条。
+  本机实测：宿主进程树（Electron → node.exe + argv[1]）下能找到；找到的命令真能跑：
+  `ELECTRON_RUN_AS_NODE=1 <exe> …/lib/bin.js --version` → `0.2.1-rc.2`。
+- **「复制诊断信息」不再把正文糊一屏**（2026-10-23，用户截图）：以前 `copyText()` 把整段文本拼进顶部提示条，
+  剪贴板没问题、页面却炸出一大坨。现在诊断内容只显示在文本框里，**复制按钮贴在文本框右上角**（框内），
+  提示条只说一句「已复制」。报告路径那种短文案仍会带上路径。
+- **设置页补上「dsh 路径」输入框**：诊断文案一直让人「在设置页填 dsh 路径」，但设置页以前根本没这个框。
+- **README 重写**：按现在这个项目（2.2）的功能与用法重写，不再沿用上游的说明。
+- 版权与致谢照旧：`LICENSE` 保留上游 `Copyright (c) 2026 c1overzz`，衍生关系写进 `NOTICE.md`。
+
+
 ## 2.1.1 — 2026-10-22
 
 - **作息设置改成结构化 UI**（2026-10-22）：多窗口（开始 / 结束 / 醒来次数，可「+ 添加窗口」、可删）·

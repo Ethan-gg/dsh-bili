@@ -1,5 +1,5 @@
 /**
- * dsh-bili-scroll —— 浏览器半端（**设置在「设置」里的一页**）
+ * dsh-bili —— 浏览器半端（**设置在「设置」里的一页**）
  * ============================================================================
  * ⭐ **client bundle 不是 ESM，是自注册脚本**（2026-10-14 从官方包里挖到的约定）：
  *
@@ -12,7 +12,7 @@
  *
  *     const slots = ctx.get('slots')
  *     slots.inject('settings.section', () => slots.register(
- *       { name: 'settings.section', id: 'bili-scroll', order: 30, label: 'B站鱼娘' },   // label = 左侧导航那一项
+ *       { name: 'settings.section', id: 'bili', order: 30, label: 'B站鱼娘' },   // label = 左侧导航那一项
  *       () => h(Panel),
  *     ))
  *
@@ -26,7 +26,7 @@
  * ============================================================================
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-bili-scroll',
+  id: 'dsh-bili',
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
@@ -86,6 +86,14 @@ window.__ModuleLoader__.load({
 [data-bd-pre]{margin:6px 0 0;padding:8px 9px;border-radius:8px;max-height:170px;overflow:auto;font-size:11px;
   line-height:15px;white-space:pre-wrap;word-break:break-all;
   background:var(--dsw-alias-bg-layer-4,rgba(0,0,0,.25));color:var(--dsw-alias-label-secondary,#c9ccd1);}
+    /* ⭐ 2026-10-23：诊断信息这种长文本放进文本框，复制按钮**贴在框里头**（右上角），别在顶上再摆一个 */
+    [data-bd-prebox]{position:relative;}
+    [data-bd-prebox] [data-bd-pre]{padding-right:66px;}
+    [data-bd-copy]{position:absolute;top:12px;right:8px;z-index:1;padding:4px 10px;border-radius:6px;
+      font-size:11px;line-height:15px;cursor:pointer;font-family:inherit;opacity:.92;
+      border:1px solid var(--dsw-alias-bg-layer-3,rgba(255,255,255,.18));
+      background:var(--dsw-alias-bg-layer-2,rgba(128,128,128,.22));color:inherit;}
+    [data-bd-copy]:hover{opacity:1;}
     /* ⭐ 2026-10-21 重做：卡片网格 + 颜色全部取「真实存在」的主题变量
        （之前用了 --dsw-alias-bg-layer-1 / --dsw-alias-bg-layer-3 —— 这两个在应用里根本不存在 ⇒
         fallback 落到硬编码深色，而文字用的 --dsw-alias-label-primary 是存在的 ⇒ 浅色主题下变近黑 ⇒ 黑底黑字看不见） */
@@ -256,6 +264,7 @@ function WatchTab() {
       const [syncOn, setSyncOn] = React.useState(null)
       const [syncTransport, setSyncTransport] = React.useState(null)
       const [syncBotId, setSyncBotId] = React.useState(null)
+      const [dshBin, setDshBin] = React.useState(null)   // dsh 的 bin.js（自动探测失败时才需要手填）
       const [syncTargetId, setSyncTargetId] = React.useState(null)
       const [syncEndpoint, setSyncEndpoint] = React.useState(null)
       const [syncConvs, setSyncConvs] = React.useState(null)
@@ -311,6 +320,7 @@ function WatchTab() {
         if (cfg && syncOn === null) setSyncOn(Boolean(cfg.syncEnabled))
         if (cfg && syncTransport === null) setSyncTransport(cfg.syncTransport || 'file')
         if (cfg && syncBotId === null) setSyncBotId(cfg.syncBotId || '')
+        if (cfg && dshBin === null) setDshBin(cfg.dshBin || '')
         if (cfg && syncTargetId === null) setSyncTargetId(cfg.syncTargetId || '')
         if (cfg && syncEndpoint === null) setSyncEndpoint(cfg.syncEndpoint || '')
         if (cfg && syncConvs === null) setSyncConvs(cfg.syncConversations || '')
@@ -432,14 +442,19 @@ function WatchTab() {
       }
 
       // ⭐ 把"要日志"变成"点一下"（2026-10-21）
+      // ⭐ 2026-10-23：生成后**显示在文本框里**（不再把正文糊到提示条上），同时静默复制一次；
+      //    想再拷一遍就点文本框右上角那个「复制」。
       const onDiagnose = async () => {
         setBusy('diag')
         try {
           const r = await jget('/diagnose')
           const text = String(r?.text || '（没拿到诊断信息）')
           setDiag(text)
-          copyText(text).catch(() => {})
-          say('诊断信息已生成并复制到剪贴板', 'good')
+          let copied = false
+          try { await navigator.clipboard.writeText(text); copied = true } catch { copied = false }
+          say(copied
+            ? '诊断信息已生成并复制 —— 也可以点文本框右上角「复制」再拷一次'
+            : '诊断信息已生成 —— 点文本框右上角的「复制」', copied ? 'good' : 'warn')
         } catch (e) { say('生成诊断信息失败：' + String(e?.message ?? e), 'warn') } finally { setBusy('') }
       }
       const onSelfCheck = async () => {
@@ -450,13 +465,16 @@ function WatchTab() {
         } catch (e) { say('自检失败：' + String(e?.message ?? e), 'warn') } finally { setBusy('') }
       }
 
-      const copyText = async (text) => {
+      // ⭐ 2026-10-23（用户反馈）：以前把**整段内容**也拼进 say()（顶部提示条）⇒ 剪贴板没问题，
+      //    页面上却炸出一大坨诊断文本（截图里那一墙）。现在提示只说一句，正文留在文本框里，复制按钮贴在框右上角。
+      const copyText = async (text, label = '') => {
         const v = String(text || '')
+        const tail = label ? '：' + label : ''
         try {
           await navigator.clipboard.writeText(v)
-          say('已复制：' + v, 'good')
+          say('已复制' + tail, 'good')
         } catch {
-          say('复制失败 —— 路径是：' + v)       // 兜底：至少把路径显示出来，手动选中也能复制
+          say('复制失败' + tail + ' —— 手动选中文本框也能复制', 'warn')
         }
       }
 
@@ -1064,13 +1082,18 @@ function WatchTab() {
           h('div', { 'data-bd-row': '' },
             h('button', { 'data-bd-btn': '', disabled: busy === 'diag', onClick: onDiagnose }, '复制诊断信息'),
             h('button', { 'data-bd-btn': '', disabled: busy === 'selfcheck', onClick: onSelfCheck }, '环境自检'),
-            h('div', { 'data-bd-note': '' }, '出问题时先点这两个：第一个把环境+日志拼成一段（已自动复制），第二个逐项告诉你哪一步不通。')),
+            h('div', { 'data-bd-note': '' }, '出问题时先点这两个：第一个把环境+日志拼成一段（会显示在下面框里、也自动复制一次，框右上角还能再复制），第二个逐项告诉你哪一步不通。')),
           checks && checks.length ? h('div', { 'data-bd-list': '', 'data-bd-checks': '' },
             checks.map((x) => h('div', { key: x.name, 'data-bd-item': '', 'data-bd-item-t': '' },
               h('div', { 'data-bd-item-t': '' }, (x.ok ? '正常 · ' : '有问题 · ') + x.name),
               h('div', { 'data-bd-item-n': '' }, x.detail || ''),
               x.ok ? null : h('div', { 'data-bd-item-why': '' }, '怎么办：' + (x.fix || '把诊断信息发给作者'))))) : null,
-          diag ? h('pre', { 'data-bd-pre': '' }, diag) : null,
+          diag ? h('div', { 'data-bd-prebox': '' },
+            h('button', {
+              'data-bd-copy': '', title: '复制这段诊断信息', disabled: busy === 'diag',
+              onClick: () => copyText(diag, '诊断信息'),
+            }, '复制'),
+            h('pre', { 'data-bd-pre': '' }, diag)) : null,
           h('div', { 'data-bd-h': '' }, '环境与账号'),
           h('div', { 'data-bd-row': '' },
             h('button', { 'data-bd-btn': '', disabled: busy === 'install', onClick: onInstall },
@@ -1082,6 +1105,15 @@ function WatchTab() {
             h('div', { 'data-bd-note': '' },
               !st.venvReady ? (st.installFailed ? '上次没装成 → 看下面日志' : '还没装 → 先点「装主依赖」')
                 : (st.loggedIn ? '装好了 → 下一步「扫码登录」' : '环境好了 → 点「扫码登录」'))),
+          // ⭐ 2026-10-23：诊断里一直让人「把 dsh 路径填进设置页」，但设置页以前根本没这个框 ⇒ 补上。
+          //    留空 = 自动探测（宿主自己的 argv[1] → 应用根 node_modules → …），一般不用管。
+          h('div', { 'data-bd-label': '' }, 'dsh 路径（自动找不到时才填）'),
+          h('input', {
+            'data-bd-input': '', placeholder: '留空 = 自动找，例如 <应用目录>/node_modules/@deepseek-ai/dsh/lib/bin.js',
+            value: dshBin ?? '',
+            onChange: (e) => setDshBin(e.target.value),
+            onBlur: () => patch({ dshBin: String(dshBin || '').trim() }, 'dsh 路径'),
+          }),
           loginState ? h('div', { 'data-bd-msg': '', 'data-good': loginTone === 'good' ? '' : undefined, 'data-warn': loginTone === 'warn' ? '' : undefined }, loginState) : null,
           st.installTail ? h('div', null,
             h('div', { 'data-bd-note': '' }, st.installing ? '正在装主依赖（进度）：' : '主依赖的日志（B站 搜索 / 字幕 / 评论 用得到，末尾）：'),
@@ -1107,7 +1139,7 @@ function WatchTab() {
             h('button', { 'data-bd-btn': '', onClick: () => onOpenFolder('home') }, '打开家目录'),
             h('button', { 'data-bd-btn': '', disabled: busy === 'verify', onClick: onVerify },
               '复核评论'),
-            h('button', { 'data-bd-btn': '', onClick: () => copyText(st.report) }, '复制报告路径')),
+            h('button', { 'data-bd-btn': '', onClick: () => copyText(st.report, '报告路径') }, '复制报告路径')),
           report !== null ? h('pre', { 'data-bd-pre': '' }, report) : null),
       )
     }
@@ -1116,16 +1148,16 @@ function WatchTab() {
       inject: ['slots'],
       apply(ctx) {
         const style = document.createElement('style')
-        style.setAttribute('data-plugin-css', 'dsh-bili-scroll')
+        style.setAttribute('data-plugin-css', 'dsh-bili')
         style.textContent = CSS
         document.head.appendChild(style)
-        ctx.effect(() => () => style.remove(), 'dsh-bili-scroll: 设置页样式')
+        ctx.effect(() => () => style.remove(), 'dsh-bili: 设置页样式')
 
         // ⭐ 进「设置」：label 就是左侧导航里那一项（抄 dsh-meme 的写法）
         const slots = (typeof ctx.get === 'function' ? ctx.get('slots') : undefined) || ctx.slots
         if (!slots) return
         slots.inject('settings.section', () => slots.register(
-          { name: 'settings.section', id: 'bili-scroll', order: 30, label: 'B站鱼娘' },
+          { name: 'settings.section', id: 'bili', order: 30, label: 'B站鱼娘' },
           () => h(Panel),
         ))
 

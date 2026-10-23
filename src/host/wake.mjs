@@ -24,7 +24,7 @@
  */
 
 /** 会话默认 id。固定值是有意的：跨天保留上下文，她才有"昨天" */
-export const SESSION_ID = 'bili-scroll'
+export const SESSION_ID = 'bili'
 
 /** 她能"被叫醒"吗（不抛异常，只回答有没有） */
 export function hasSession(sc) {

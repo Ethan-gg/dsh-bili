@@ -10,7 +10,7 @@ out/
 log/
 *.cmd
 
-# 分析用的上游快照（dsh-bili-scroll / dsh-bili-whale 的原样代码）。
+# 分析用的上游快照（dsh-bili / dsh-bili-whale 的原样代码）。
 # 只在 M2「Node 化移植」期间当参照；移植完就删，不进包也不进仓库。
 _ref/
 

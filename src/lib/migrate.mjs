@@ -161,7 +161,7 @@ export function migrateIfNeeded({ env = process.env, log = () => {}, dryRun = fa
       writeFileSync(join(L.scrollDir, 'MOVED.md'), [
         '# 这个目录已经搬走了',
         '',
-        `新的家在 \`${p.home}\`（dsh-bili-scroll 2.1 起）。`,
+        `新的家在 \`${p.home}\`（dsh-bili 2.1 起）。`,
         '',
         '- 老的报告、判重表、Python 环境都在新家，没有丢。',
         '- 如果你还装着 2.0 或更早的版本，它会把这里当成空目录重新建环境 —— 升级到 2.1 就不会了。',

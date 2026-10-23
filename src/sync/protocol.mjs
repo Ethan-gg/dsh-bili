@@ -74,7 +74,7 @@ export function verifySignature(env, secret) {
 }
 
 /** 造一个已签名的事件（本地发出去的都走这里） */
-export function makeEvent({ type, payload = {}, from = 'local', source = 'dsh-bili-scroll', at = new Date(), secret = '' } = {}) {
+export function makeEvent({ type, payload = {}, from = 'local', source = 'dsh-bili', at = new Date(), secret = '' } = {}) {
   if (!TYPE_LIST.includes(type)) throw new Error(`未知事件类型：${type}`)
   if (!SIDES.includes(from)) throw new Error(`未知发出方：${from}`)
   const env = {
