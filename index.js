@@ -36,6 +36,7 @@ import { loadCred as dmCred, listSessions as dmList, fetchMsgs as dmFetch } from
 import { ensureUv } from './lib/uvfetch.mjs'
 import { applyFlat, flatView, isNewShape, parseWindows, readConfig, writeConfig } from './src/lib/config.mjs'
 import { findDshCli as locateDshCli, hasDshOnPath as dshOnPath } from './src/lib/dsh.mjs'
+import { parseSeenTable as parseSeenTableText } from './src/lib/seen.mjs'
 import { evaluateShare, readLedger, recordShare as gateRecord, writeLedger } from './src/host/gate.mjs'
 import { completePlan, makePlan, windowsOf } from './src/host/clock.mjs'
 import { formatMaterial as formatCommentMaterial, pickNewReplies } from './src/host/listen.mjs'
@@ -661,6 +662,36 @@ function reportMeta() {
   }
 
   const hasCredential = () => existsSync(join(stateDir, 'bili_credential.json'))
+
+  /**
+   * ⭐ 2026-10-23：**B站 账号是不是被禁言 / 封停** —— 直接查 `/x/space/myinfo` 的 `silence`。
+   *   为什么要它（用户实测）：评论接口回 `code=-102 账号被封停`、私信页面写着"账号封禁中，无法完成操作"，
+   *   但设置页和诊断里**看不出来** ⇒ 用户只会觉得"插件坏了、私信不回"。缓存 60 秒，别每 5 秒打一次接口。
+   */
+  let acctState = { at: 0, data: null }
+  const accountState = async () => {
+    if (acctState.data && Date.now() - acctState.at < 60_000) return acctState.data
+    let out = { ok: false, error: '没有凭证' }
+    try {
+      const cred = dmCred(stateDir)
+      if (cred) {
+        const r = await fetch('https://api.bilibili.com/x/space/myinfo', {
+          headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://space.bilibili.com/', Cookie: `SESSDATA=${cred.sessdata}; bili_jct=${cred.bili_jct}; buvid3=${cred.buvid3}` },
+          signal: AbortSignal.timeout(6000),
+        })
+        const j = await r.json().catch(() => null)
+        if (Number(j?.code) === 0 && j?.data) out = { ok: true, silence: Number(j.data.silence) || 0, mid: Number(j.data.mid) || 0 }
+        else out = { ok: false, error: 'myinfo code=' + (j?.code ?? '?') + ' ' + (j?.message || '') }
+      }
+    } catch (e) { out = { ok: false, error: String(e?.message ?? e) } }
+    acctState = { at: Date.now(), data: out }
+    return out
+  }
+  const accountStateText = async () => {
+    const s = await accountState()
+    if (!s.ok) return '查不到（' + (s.error || '未知原因') + '）'
+    return s.silence ? '⚠️ 禁言 / 封禁中（silence=' + s.silence + '）—— 评论和私信都发不出去，去 B站「客服中心 / 申诉」看原因和期限' : '正常'
+  }
 
   /* ─────────────── 工具 ─────────────── */
 
@@ -1460,7 +1491,11 @@ function reportMeta() {
   let dmUidCache = 0
   async function warmDmUid() {
     if (Number(cfg.dmUid) > 0) return Number(cfg.dmUid)
-    if (cfg.dmMode === 'off') return 0
+    // ⭐ 2026-10-23 修（用户实测："我私信你了，为什么不回复"）：
+    //    `dmMode=off` 只表示「**不主动**投递私信」，它**不该拦住私信监听去认人** ——
+    //    以前这里一短路，`dmTick` 就永远拿不到主人 UID ⇒ 每分钟写一句"不知道回给谁" ⇒ 永远不回复 ✗
+    //    ⇒ 只有「投递关着 **且** 监听也关着」才没必要查。
+    if (cfg.dmMode === 'off' && !cfg.dmWatch) return 0
     const name = String(cfg.mentionName || '').trim()
     if (!name) return 0
     try {
@@ -2137,6 +2172,15 @@ function reportMeta() {
         seen[String(s.uid)] = last.key
         writeJsonFile(dmSeenFile, seen)
         if (Number(cfg.dmReplyPerDay) > 0 && quota.n >= Number(cfg.dmReplyPerDay)) { log('私信监听：今天的回复额度用完了（' + quota.n + '）⇒ 这条先不回'); continue }
+        // ⭐ 2026-10-23：账号被禁言/封停时，回复一定失败（B站 回 code=-102）⇒ 别白叫醒一轮模型，
+        //    直接把话说清楚（用户当时就是"私信你了，为什么不回" —— 不是插件不回，是账号发不出去）
+        try {
+          const acct = await accountState()
+          if (acct.ok && acct.silence) {
+            log('私信监听：B站 账号被禁言/封停（silence=' + acct.silence + '）⇒ 这条先不回；解封后新消息会照常回（不是插件的问题）')
+            continue
+          }
+        } catch { /* 查不到账号状态就照常试 */ }
         log(`私信监听：收到新消息 —— ${last.text.slice(0, 40)}`)
         runDmReply(s.uid, last.text)
         quota.n++
@@ -2409,33 +2453,14 @@ function reportMeta() {
    * 超过 2MB 就滚成 `duty.log.1`（只留一份），别让它在 C 盘上无声地长。
    */
   /* ─────────────── 「它刷过的视频」：数据层 + 封面代理 ─────────────── */
-  /** seen.md 的表格一行一条：`| 日期 | bvid | 标题 | UP | 状态 |`（跳过的也记，理由写在状态里） */
+  /**
+   * seen.md 一行一条。⚠️ 支持两种格式（2026-10-23 修）：
+   *   · 现在 duty.md 让那一轮追加的：`- 日期 · BV号 · 标题 · UP · 状态 · 链接`（跳过/挑了都记）
+   *   · 老版本写的表格：`| 日期 | bvid | 标题 | UP | 状态 |`
+   * 解析逻辑在 `src/lib/seen.mjs`（抽出去才能被 `test/seen.test.mjs` 直接验）。
+   */
   const parseSeenTable = () => {
-    const file = join(stateDir, 'seen.md')
-    let text = ''
-    try { text = readFileSync(file, 'utf8') } catch { return [] }
-    const out = []
-    const seen = new Set()
-    for (const raw of text.split(/\r?\n/)) {
-      const line = raw.trim()
-      if (!line.startsWith('|')) continue
-      const cells = line.split('|').map((s) => s.trim())
-      // 去掉首尾空段：["", 日期, bvid, 标题, UP, 状态, ""]
-      const c = cells.slice(1, cells.length - 1)
-      if (c.length < 5) continue
-      const [day, bvid, title, up, status] = c
-      if (!/^BV[0-9A-Za-z]{10}$/.test(bvid)) continue          // 表头 / 分隔线 / 别的表格都跳过
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue
-      const key = bvid + '@' + day
-      if (seen.has(key)) continue                              // 同一天重复记的只留第一条
-      seen.add(key)
-      const picked = status.includes('挑了')
-      const commented = status.includes('评论')
-    const delivered = /评论|私信|已发/.test(status)   // 2026-10-21：2.0 起默认私信投递 ⇒ 「发过」不再只等于「评论过」
-      out.push({ day, bvid, title, up, status, picked, commented, delivered, url: 'https://www.bilibili.com/video/' + bvid })
-    }
-    out.sort((a, b) => (a.day === b.day ? (a.picked === b.picked ? 0 : a.picked ? -1 : 1) : (a.day < b.day ? 1 : -1)))
-    return out
+    try { return parseSeenTableText(readFileSync(join(stateDir, 'seen.md'), 'utf8')) } catch { return [] }
   }
 
   /** 封面代理：浏览器不能直连 i0.hdslb.com（防盗链 403 + 等于把用户 IP 交出去）⇒ 宿主取回来再转发 */
@@ -3035,7 +3060,7 @@ function reportMeta() {
 
     // 「测一下」：真跑一次，回答"能不能用"
     // ⭐ 2026-10-21：把"要日志"变成"点一下" —— 诊断信息（纯文本，可整段复制）
-    function diagnoseText() {
+    async function diagnoseText() {
       const tail = (() => {
         try { const p = join(stateDir, 'duty.log'); return existsSync(p) ? readFileSync(p, 'utf8').slice(-6000) : '（没有 duty.log）' }
         catch (e) { return '（日志读不到：' + String(e?.message ?? e) + '）' }
@@ -3063,6 +3088,7 @@ function reportMeta() {
         'venv 就绪：' + (venvReadyNow() ? '是' : '否') + (missingVenvDeps().length ? '（缺：' + missingVenvDeps().join(' / ') + '）' : ''),
         '转写环境：' + (existsSync(join(stateDir, '.venv-asr')) ? '在' : '没装'),
         'B站 登录：' + (hasCredential() ? '有凭证' : '没有凭证'),
+        'B站 账号状态：' + await accountStateText(),
         '云桥：' + (() => {
           try {
             const c = syncCfg()
@@ -3099,6 +3125,13 @@ function reportMeta() {
       }
       // ③ 凭证
       put('B站 已登录', hasCredential(), hasCredential() ? '家目录里有凭证文件' : '还没有凭证', '点「扫码登录」，手机确认时选「记住我 / 长期」')
+      // ③b 账号能不能发言（被禁言/封停时评论和私信都会被 B站 拒，不是插件坏了）
+      {
+        const s = await accountState()
+        put('B站 账号能发言（没被禁言）', Boolean(s.ok) && s.silence === 0,
+          s.ok ? (s.silence ? '被禁言 / 封停（silence=' + s.silence + '）' : '正常') : '查不到：' + (s.error || ''),
+          '去 B站 客服中心 / 申诉看禁言原因和期限；解封前评论、私信都发不出去')
+      }
       // ④ 家目录可写
       let writable = true
       try { const t = join(stateDir, '.diag-write-test'); writeFileSync(t, 'x'); rmSync(t) } catch { writable = false }
@@ -3128,7 +3161,7 @@ function reportMeta() {
 
     // 「复制诊断信息」
     if (req.method === 'GET' && path === '/api/bili-duty/diagnose') {
-      return sendJson(res, 200, { ok: true, text: diagnoseText() })
+      return sendJson(res, 200, { ok: true, text: await diagnoseText() })
     }
 
     // 「环境自检」
